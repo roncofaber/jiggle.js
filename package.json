@@ -1,0 +1,25 @@
+{
+  "name": "jiggle.js",
+  "version": "0.1.0",
+  "description": "Composable 2D particle physics for canvas",
+  "type": "module",
+  "main": "dist/jiggle.umd.js",
+  "module": "dist/jiggle.esm.js",
+  "exports": {
+    ".": {
+      "import": "./dist/jiggle.esm.js",
+      "require": "./dist/jiggle.umd.js"
+    }
+  },
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "demo": "npx serve demo"
+  },
+  "keywords": ["canvas", "physics", "particles", "animation", "2d"],
+  "author": "Fabrice Roncoroni",
+  "license": "MIT",
+  "devDependencies": {
+    "rollup": "^4.0.0"
+  }
+}

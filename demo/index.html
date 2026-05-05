@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>jiggle.js demo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; color: #e6edf3; font-family: monospace; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+
+        #controls {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(22,27,34,0.92);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            min-width: 220px;
+        }
+        #controls h3 { color: #58a6ff; margin-bottom: 0.25rem; }
+        #controls h4 { color: #79c0ff; margin-top: 0.25rem; font-size: 0.75rem; }
+        label { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+        input[type=range] { width: 100px; }
+        span.val { color: #79c0ff; width: 42px; text-align: right; }
+        .sep { border: none; border-top: 1px solid #30363d; margin: 0.25rem 0; }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="controls">
+    <h3>jiggle.js</h3>
+
+    <h4>Thermal</h4>
+    <label>strength  <input type="range" id="thermal"  min="0" max="0.08"  step="0.001" value="0.018"> <span class="val" id="v-thermal">0.018</span></label>
+    <label>friction  <input type="range" id="friction" min="0" max="0.02"  step="0.001" value="0.006"> <span class="val" id="v-friction">0.006</span></label>
+
+    <hr class="sep">
+    <h4>Species A <span style="color:rgba(0,212,176,0.9)">●</span></h4>
+    <label>ε (A-A)   <input type="range" id="epsA"     min="0" max="0.01"  step="0.0001" value="0.003"> <span class="val" id="v-epsA">0.003</span></label>
+    <label>σ (A-A)   <input type="range" id="sigA"     min="5"  max="50"   step="1"      value="22">    <span class="val" id="v-sigA">22</span></label>
+
+    <hr class="sep">
+    <h4>Species B <span style="color:rgba(220,100,60,0.9)">●</span></h4>
+    <label>ε (B-B)   <input type="range" id="epsB"     min="0" max="0.01"  step="0.0001" value="0.002"> <span class="val" id="v-epsB">0.002</span></label>
+    <label>σ (B-B)   <input type="range" id="sigB"     min="5"  max="50"   step="1"      value="14">    <span class="val" id="v-sigB">14</span></label>
+
+    <hr class="sep">
+    <label>link dist <input type="range" id="linkdist" min="50" max="300"  step="5"      value="100">   <span class="val" id="v-linkdist">100</span></label>
+    <label>gravity   <input type="range" id="gravity"  min="0"  max="0.1"  step="0.002"  value="0">     <span class="val" id="v-gravity">0</span></label>
+</div>
+
+<script type="module">
+import {
+    Simulation, ThermalForce, LJForce, MouseForce, GravityForce, CanvasRenderer
+} from '../src/index.js';
+
+const canvas = document.getElementById('c');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const sim = Simulation.fromMixture([
+    { species: 'A', count: 35, radius: 3 },
+    { species: 'B', count: 20, radius: 2.5 },
+], { width: canvas.width, height: canvas.height });
+
+const thermal = new ThermalForce({ friction: 0.006, strength: 0.018 });
+const gravity  = new GravityForce({ gy: 0 });
+const mouse    = new MouseForce({ dist: 120, strength: 0.06 });
+
+let lj = new LJForce({
+    species: {
+        A: { epsilon: 0.003, sigma: 22 },
+        B: { epsilon: 0.002, sigma: 14 },
+    },
+});
+
+sim.addForce(thermal).addForce(lj).addForce(mouse).addForce(gravity);
+
+const renderer = new CanvasRenderer(canvas, {
+    colorMap: {
+        A: 'rgba(0,212,176,',
+        B: 'rgba(220,100,60,',
+    },
+    lineColor:    'rgba(100,180,160,',
+    mouseColor:   'rgba(168,96,14,',
+    linkDist:     100,
+    mouseLinkDist: 140,
+});
+
+canvas.addEventListener('mousemove', e => mouse.setPosition(e.clientX, e.clientY));
+canvas.addEventListener('mouseleave', () => mouse.clear());
+
+window.addEventListener('resize', () => {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    sim.resize(canvas.width, canvas.height);
+});
+
+function loop() {
+    sim.step();
+    renderer.render(sim.particles, mouse);
+    requestAnimationFrame(loop);
+}
+loop();
+
+// Rebuild LJForce from current slider values
+function rebuildLJ() {
+    const epsA = parseFloat(document.getElementById('epsA').value);
+    const sigA = parseFloat(document.getElementById('sigA').value);
+    const epsB = parseFloat(document.getElementById('epsB').value);
+    const sigB = parseFloat(document.getElementById('sigB').value);
+    sim.removeForce(lj);
+    lj = new LJForce({ species: { A: { epsilon: epsA, sigma: sigA }, B: { epsilon: epsB, sigma: sigB } } });
+    sim.addForce(lj);
+}
+
+function wire(id, valId, cb) {
+    const input = document.getElementById(id);
+    const label = document.getElementById(valId);
+    input.addEventListener('input', () => { label.textContent = input.value; cb(parseFloat(input.value)); });
+}
+
+wire('thermal',  'v-thermal',  v => thermal.strength = v);
+wire('friction', 'v-friction', v => thermal.friction  = v);
+wire('gravity',  'v-gravity',  v => gravity.gy        = v);
+wire('linkdist', 'v-linkdist', v => renderer.linkDist  = v);
+
+for (const id of ['epsA', 'sigA', 'epsB', 'sigB']) {
+    const input = document.getElementById(id);
+    input.addEventListener('input', () => {
+        document.getElementById('v-' + id).textContent = input.value;
+        rebuildLJ();
+    });
+}
+</script>
+</body>
+</html>
