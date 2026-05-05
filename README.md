@@ -35,13 +35,11 @@ loop();
 ## Simulation
 
 ```js
-// Uniform particles
 const sim = new Simulation({ count: 75, width: 800, height: 600 });
 
-// Mixed species
 const sim = Simulation.fromMixture([
     { species: 'A', count: 40, radius: 3 },
-    { species: 'B', count: 20, radius: 2.5 },
+    { species: 'B', count: 20, radiusMin: 1, radiusMax: 4 },
 ], { width: 800, height: 600 });
 ```
 
@@ -49,7 +47,7 @@ const sim = Simulation.fromMixture([
 |--------|-------------|
 | `sim.addForce(force)` | Add a force; returns `sim` for chaining |
 | `sim.removeForce(force)` | Remove a force by reference |
-| `sim.step(context?)` | Advance one tick: zero forces → apply all → integrate → reflect |
+| `sim.step(context?)` | Advance one tick |
 | `sim.resize(width, height)` | Update boundary dimensions |
 | `sim.particles` | Array of `Particle` objects |
 
@@ -60,17 +58,31 @@ const sim = Simulation.fromMixture([
 | `x`, `y` | Position (pixels) |
 | `vx`, `vy` | Velocity |
 | `fx`, `fy` | Accumulated force (zeroed each step) |
-| `radius` | Visual and physical radius |
+| `radius` | Radius in pixels |
 | `mass` | Defaults to `radius²` |
 | `species` | String label (default `'default'`) |
 
-## Forces
+## Boundaries
 
-All forces implement `apply(particles, sim, context)`. Add them in any order; they accumulate into `p.fx`/`p.fy` (or directly into `p.vx`/`p.vy` for velocity-space forces).
+Pass a boundary to the simulation constructor or `fromMixture`. Default is `PeriodicBoundary`.
+
+```js
+import { Simulation, ReflectiveBoundary } from 'jiggle.js';
+
+const sim = new Simulation({ width: 800, height: 600, boundary: new ReflectiveBoundary() });
+```
+
+| Class | Behavior |
+|-------|----------|
+| `PeriodicBoundary` | Wrap-around with minimum image convention in forces |
+| `ReflectiveBoundary` | Elastic bounce off walls |
+| `AbsorbingBoundary` | Particles that leave the box are removed |
+
+## Forces
 
 ### ThermalForce
 
-Langevin thermostat — friction damping + Gaussian noise. Drives Brownian motion.
+Langevin thermostat — friction damping + Gaussian noise.
 
 ```js
 new ThermalForce({ friction: 0.004, strength: 0.022 })
@@ -83,7 +95,7 @@ new ThermalForce({ friction: 0.004, strength: 0.022 })
 
 ### RepulsionForce
 
-Simple O(n²) pairwise soft repulsion. Use when you don't need attraction or species differentiation.
+Pairwise soft repulsion.
 
 ```js
 new RepulsionForce({ dist: 45, strength: 0.06 })
@@ -96,7 +108,7 @@ new RepulsionForce({ dist: 45, strength: 0.06 })
 
 ### LJForce
 
-Lennard-Jones 12-6 pair potential. Has both an attractive well and a repulsive core — particles settle at an equilibrium separation of `~1.12σ`. Supports multiple species with Lorentz-Berthelot mixing rules.
+Lennard-Jones 12-6 pair potential. Equilibrium separation at `~1.12σ`. Supports multiple species with Lorentz-Berthelot mixing rules.
 
 ```js
 new LJForce({
@@ -104,9 +116,9 @@ new LJForce({
         A: { epsilon: 0.003, sigma: 22 },
         B: { epsilon: 0.001, sigma: 14 },
     },
-    cutoffMult: 2.5,   // cutoff = cutoffMult × sigma (per pair)
+    cutoffMult: 2.5,
     overrides: {
-        'A-B': { epsilon: 0.0005, sigma: 18 }, // override auto-mixed cross params
+        'A-B': { epsilon: 0.0005, sigma: 18 },
     },
 })
 ```
@@ -117,13 +129,11 @@ new LJForce({
 | `cutoffMult` | `2.5` | Cutoff as a multiple of σ |
 | `overrides` | `{}` | Manual cross-pair params, keyed `'A-B'` |
 
-**Mixing rules (Lorentz-Berthelot):** `σ_AB = (σ_A + σ_B) / 2`, `ε_AB = √(ε_A × ε_B)`
-
-Typical pixel-space values: `sigma` 10–40 px, `epsilon` 0.001–0.005.
+Mixing rules: `σ_AB = (σ_A + σ_B) / 2`, `ε_AB = √(ε_A × ε_B)`. Typical values: `sigma` 10–40 px, `epsilon` 0.001–0.005.
 
 ### MorseForce
 
-Morse pair potential. Softer repulsion than LJ, asymmetric well — better for bond-like behavior. Same species/mixing API as `LJForce`.
+Morse pair potential. Same species/mixing API as `LJForce`.
 
 ```js
 new MorseForce({
@@ -141,13 +151,11 @@ new MorseForce({
 | `cutoffMult` | `4.0` | Cutoff as a multiple of `re` |
 | `overrides` | `{}` | Manual cross-pair params |
 
-**Params:** `De` — well depth; `re` — equilibrium distance (pixels); `a` — well width (larger = narrower).
-
-**Mixing rules:** `De_AB = √(De_A × De_B)`, `re_AB = (re_A + re_B) / 2`, `a_AB = √(a_A × a_B)`
+`De` — well depth; `re` — equilibrium distance (pixels); `a` — well width.
 
 ### MouseForce
 
-Repels particles away from the cursor.
+Repels particles from the cursor.
 
 ```js
 const mouse = new MouseForce({ dist: 120, strength: 0.06 });
@@ -155,14 +163,7 @@ canvas.addEventListener('mousemove', e => mouse.setPosition(e.clientX, e.clientY
 canvas.addEventListener('mouseleave', () => mouse.clear());
 ```
 
-| Method | Description |
-|--------|-------------|
-| `setPosition(x, y)` | Update cursor position |
-| `clear()` | Disable force (mouse left canvas) |
-
 ### GravityForce
-
-Constant directional gravity.
 
 ```js
 new GravityForce({ gx: 0, gy: 0.05 })
@@ -172,69 +173,26 @@ new GravityForce({ gx: 0, gy: 0.05 })
 
 ```js
 const renderer = new CanvasRenderer(canvas, options);
-renderer.render(sim.particles, mouseForce); // mouseForce can be null
+renderer.render(sim.particles, mouseForce);
 ```
-
-### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `dotColor` | `'rgba(0,180,150,'` | Default particle fill (rgba prefix) |
-| `lineColor` | `'rgba(0,160,140,'` | Inter-particle link color (rgba prefix) |
-| `mouseColor` | `'rgba(168,96,14,'` | Mouse node and link color (rgba prefix) |
-| `linkDist` | `130` | Max distance for drawing links (pixels) |
+| `lineColor` | `'rgba(0,160,140,'` | Inter-particle link color |
+| `mouseColor` | `'rgba(168,96,14,'` | Mouse node and link color |
+| `linkDist` | `130` | Max distance for particle links (pixels) |
 | `mouseLinkDist` | `160` | Max distance for mouse links (pixels) |
 | `colorMap` | `{}` | Per-species color: `{ A: 'rgba(0,212,176,' }` |
-| `drawParticle` | `null` | `(ctx, p) => void` — fully custom particle drawing |
-| `drawLink` | `null` | `(ctx, pi, pj, alpha) => void` — custom link drawing |
+| `drawParticle` | `null` | `(ctx, p) => void` |
+| `drawLink` | `null` | `(ctx, pi, pj, alpha) => void` |
 | `drawMouseLink` | `null` | `(ctx, p, mouse, alpha) => void` |
 | `drawMouseNode` | `null` | `(ctx, mouse) => void` |
 
-The `alpha` argument passed to link callbacks is already normalized `[0, 1]` (1 at contact, 0 at cutoff). All callbacks fall back to the built-in defaults when omitted.
+`alpha` is normalized `[0, 1]` (1 at contact, 0 at cutoff).
 
-### Custom renderer example
-
-```js
-const renderer = new CanvasRenderer(canvas, {
-    linkDist: 130,
-    drawParticle(ctx, p) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.species === 'A' ? '#00d4b0' : '#dc6432';
-        ctx.fill();
-    },
-    drawLink(ctx, pi, pj, alpha) {
-        ctx.beginPath();
-        ctx.strokeStyle = `rgba(200,200,200,${alpha * 0.4})`;
-        ctx.lineWidth = 1;
-        ctx.moveTo(pi.x, pi.y);
-        ctx.lineTo(pj.x, pj.y);
-        ctx.stroke();
-    },
-});
-```
-
-### Custom render loop (no CanvasRenderer)
-
-`sim.particles` is plain data — write any render loop you like:
-
-```js
-function render() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const p of sim.particles) {
-        // p.x, p.y, p.radius, p.species
-    }
-}
-```
-
-## Dev
+## Build
 
 ```bash
-# Live demo (no build needed — imports from src/ directly)
-npx serve .
-# open http://localhost:3000/demo/
-
-# Build dist bundles
-npm install
-npm run build
+npm install && npm run build
 ```
