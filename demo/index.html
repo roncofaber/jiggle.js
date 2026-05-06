@@ -711,6 +711,7 @@ wire('scale', v => {
     renderer.viewY += cy / renderer.scale - cy / v;
     renderer.scale = v;
     scale = v;
+    clampView();
 });
 
 wireCheck('bf-on',    v => boundary_f.enabled       = v);
@@ -758,17 +759,32 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mouseleave', () => { mouse.clear(); mousePixels.x = mousePixels.y = null; });
 
+// ── Viewport clamping ─────────────────────────────────────────────────
+// Ensures viewX/Y never scroll the box fully off-screen.
+// When fully zoomed out (box smaller than canvas), centers the box.
+function clampView() {
+    const s    = renderer.scale;
+    const visW = canvas.width  / s;
+    const visH = canvas.height / s;
+    if (visW >= sim.width)  renderer.viewX = (sim.width  - visW) / 2;
+    else renderer.viewX = Math.max(0, Math.min(sim.width  - visW, renderer.viewX));
+    if (visH >= sim.height) renderer.viewY = (sim.height - visH) / 2;
+    else renderer.viewY = Math.max(0, Math.min(sim.height - visH, renderer.viewY));
+}
+
 // ── Scroll to zoom (toward cursor) ───────────────────────────────────
 canvas.addEventListener('wheel', e => {
     e.preventDefault();
     const factor   = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const minScale = Math.min(canvas.width / sim.width, canvas.height / sim.height);
     const oldScale = renderer.scale;
-    const newScale = Math.max(0.5, Math.min(20, oldScale * factor));
+    const newScale = Math.max(minScale, Math.min(20, oldScale * factor));
     // Keep the Å position under the cursor fixed
     renderer.viewX += e.clientX / oldScale - e.clientX / newScale;
     renderer.viewY += e.clientY / oldScale - e.clientY / newScale;
     renderer.scale  = newScale;
     scale           = newScale;
+    clampView();
     document.getElementById('scale').value   = +newScale.toFixed(2);
     document.getElementById('v-scale').value = +newScale.toFixed(2);
 }, { passive: false });
