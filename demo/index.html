@@ -747,17 +747,37 @@ document.getElementById('boundary').addEventListener('change', e => {
     sim.boundary = map[e.target.value];
 });
 
-// ── Mouse tracking ────────────────────────────────────────────────────
+// ── Mouse tracking + pan ──────────────────────────────────────────────
 // mousePixels: raw canvas pixel coords for renderer links/node drawing
 // mouse (MouseForce): Å coords for physics
+// Pan: middle-click or right-click drag
 const mousePixels = { x: null, y: null };
+let _panActive = false, _panLastX = 0, _panLastY = 0;
+
+canvas.addEventListener('mousedown', e => {
+    if (e.button === 1 || e.button === 2) {
+        _panActive = true;
+        _panLastX  = e.clientX;
+        _panLastY  = e.clientY;
+        e.preventDefault();
+    }
+});
 canvas.addEventListener('mousemove', e => {
+    if (_panActive) {
+        renderer.viewX -= (e.clientX - _panLastX) / renderer.scale;
+        renderer.viewY -= (e.clientY - _panLastY) / renderer.scale;
+        _panLastX = e.clientX;
+        _panLastY = e.clientY;
+        clampView();
+    }
     mousePixels.x = e.clientX;
     mousePixels.y = e.clientY;
     // Å position = pixel / scale + viewport offset
     mouse.setPosition(e.clientX / renderer.scale + renderer.viewX, e.clientY / renderer.scale + renderer.viewY);
 });
-canvas.addEventListener('mouseleave', () => { mouse.clear(); mousePixels.x = mousePixels.y = null; });
+canvas.addEventListener('mouseup',    e => { if (e.button === 1 || e.button === 2) _panActive = false; });
+canvas.addEventListener('mouseleave', e => { _panActive = false; mouse.clear(); mousePixels.x = mousePixels.y = null; });
+canvas.addEventListener('contextmenu', e => e.preventDefault()); // suppress right-click menu
 
 // ── Viewport clamping ─────────────────────────────────────────────────
 // Ensures viewX/Y never scroll the box fully off-screen.
