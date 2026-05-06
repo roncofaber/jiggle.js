@@ -859,16 +859,18 @@ canvas.addEventListener('mouseleave', () => { _panPrevX = null; mouse.clear(); m
 canvas.addEventListener('contextmenu', e => e.preventDefault()); // suppress right-click menu
 
 // ── Viewport clamping ─────────────────────────────────────────────────
-// Ensures viewX/Y never scroll the box fully off-screen.
-// When fully zoomed out (box smaller than canvas), centers the box.
+// Zoomed in (visW < sim.width): viewX ∈ [0, sim.width - visW] — box fills viewport.
+// Zoomed out (visW > sim.width): viewX ∈ [sim.width - visW, 0] — box slides freely.
 function clampView() {
     const s    = renderer.scale;
     const visW = canvas.width  / s;
     const visH = canvas.height / s;
-    if (visW >= sim.width)  renderer.viewX = (sim.width  - visW) / 2;
-    else renderer.viewX = Math.max(0, Math.min(sim.width  - visW, renderer.viewX));
-    if (visH >= sim.height) renderer.viewY = (sim.height - visH) / 2;
-    else renderer.viewY = Math.max(0, Math.min(sim.height - visH, renderer.viewY));
+    const loX = Math.min(0, sim.width  - visW);
+    const hiX = Math.max(0, sim.width  - visW);
+    const loY = Math.min(0, sim.height - visH);
+    const hiY = Math.max(0, sim.height - visH);
+    renderer.viewX = Math.max(loX, Math.min(hiX, renderer.viewX));
+    renderer.viewY = Math.max(loY, Math.min(hiY, renderer.viewY));
 }
 
 // ── Scroll to zoom (toward cursor) ───────────────────────────────────
