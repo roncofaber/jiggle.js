@@ -23,9 +23,9 @@ export class ThermalForce {
         this.isLangevin  = true;        // signals BAOAB integrator to place this in the O slot
     }
 
-    apply(store) {
+    apply(store, sim) {
         const { vx, vy, mass, count } = store;
-        const c1   = Math.exp(-this.gamma);
+        const c1   = Math.exp(-this.gamma * (sim?.dt ?? 1));
         const c2sq = (1 - c1 * c1) * this.temperature;
         for (let i = 0; i < count; i++) {
             const c2 = Math.sqrt(c2sq / mass[i]);

@@ -95,11 +95,12 @@
     }
 
     class Simulation {
-        constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50 } = {}) {
+        constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50, dt = 1 } = {}) {
             this.width    = width;
             this.height   = height;
             this.boundary = boundary;
             this.maxSpeed = maxSpeed;
+            this.dt       = dt;
             this.forces   = [];
             this.store    = new ParticleStore(Math.max(count, 32));
             for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
@@ -273,18 +274,19 @@
         step(context = {}) {
             const store = this.store;
             const { x, y, vx, vy, fx, fy, mass } = store;
-            const n = store.count;
+            const n  = store.count;
+            const dt = this.dt;
 
             // ── B: first half-kick ───────────────────────────────────────
             for (let i = 0; i < n; i++) {
-                vx[i] += 0.5 * fx[i] / mass[i];
-                vy[i] += 0.5 * fy[i] / mass[i];
+                vx[i] += 0.5 * dt * fx[i] / mass[i];
+                vy[i] += 0.5 * dt * fy[i] / mass[i];
             }
 
             // ── A: first half-drift ──────────────────────────────────────
             for (let i = 0; i < n; i++) {
-                x[i] += 0.5 * vx[i];
-                y[i] += 0.5 * vy[i];
+                x[i] += 0.5 * dt * vx[i];
+                y[i] += 0.5 * dt * vy[i];
             }
 
             // ── O: Langevin thermostat ───────────────────────────────────
@@ -295,8 +297,8 @@
 
             // ── A: second half-drift + boundary ──────────────────────────
             for (let i = 0; i < n; i++) {
-                x[i] += 0.5 * vx[i];
-                y[i] += 0.5 * vy[i];
+                x[i] += 0.5 * dt * vx[i];
+                y[i] += 0.5 * dt * vy[i];
                 this.boundary.applyPosition(store, i, this);
             }
 
@@ -315,8 +317,8 @@
             const maxSpeed2 = this.maxSpeed * this.maxSpeed;
             const n2 = store.count; // may differ after filterParticles
             for (let i = 0; i < n2; i++) {
-                vx[i] += 0.5 * fx[i] / mass[i];
-                vy[i] += 0.5 * fy[i] / mass[i];
+                vx[i] += 0.5 * dt * fx[i] / mass[i];
+                vy[i] += 0.5 * dt * fy[i] / mass[i];
 
                 if (!isFinite(vx[i]) || !isFinite(vy[i])) { vx[i] = 0; vy[i] = 0; }
 
@@ -373,9 +375,9 @@
             this.isLangevin  = true;        // signals BAOAB integrator to place this in the O slot
         }
 
-        apply(store) {
+        apply(store, sim) {
             const { vx, vy, mass, count } = store;
-            const c1   = Math.exp(-this.gamma);
+            const c1   = Math.exp(-this.gamma * (sim?.dt ?? 1));
             const c2sq = (1 - c1 * c1) * this.temperature;
             for (let i = 0; i < count; i++) {
                 const c2 = Math.sqrt(c2sq / mass[i]);

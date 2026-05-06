@@ -259,6 +259,11 @@
                 <input type="range" id="steps" min="1" max="8" step="1" value="1">
                 <input type="number" class="row-val" id="v-steps" value="1">
             </div>
+            <div class="row">
+                <span class="row-label">dt</span>
+                <input type="range" id="dt" min="0.01" max="1" step="0.01" value="1">
+                <input type="number" class="row-val" id="v-dt" value="1">
+            </div>
         </div></div></div>
     </div>
 
@@ -667,6 +672,7 @@ function wireCheck(id, cb) {
 wire('kbt',           v => thermal.temperature      = v);
 wire('gamma',         v => thermal.gamma            = v);
 wire('steps',         v => stepsPerFrame            = v);
+wire('dt',            v => sim.dt                   = v);
 
 wireCheck('bf-on',    v => boundary_f.enabled       = v);
 wire('bf-margin',     v => boundary_f.margin        = v);
