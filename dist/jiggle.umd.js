@@ -1044,6 +1044,7 @@
             mouseLinkDist = 15,           // Å
             scale         = 1,            // pixels / Å
             colorMap      = {},
+            boxColor      = null, // stroke color for sim box outline, e.g. 'rgba(255,255,255,0.2)'
             drawParticle  = null, // (ctx, p) => void — custom particle drawing
             drawLink      = null, // (ctx, pi, pj, alpha) => void — custom link drawing
             drawMouseLink = null, // (ctx, p, mouse, alpha) => void  (mouse is pixel {x,y})
@@ -1059,6 +1060,7 @@
             this.scale         = scale;
             this.viewX         = 0; // Å — viewport left edge in simulation space
             this.viewY         = 0; // Å — viewport top  edge in simulation space
+            this.boxColor      = boxColor;
             this.linksEnabled      = true;
             this.mouseLinksEnabled = true;
             this.colorMap      = colorMap;
@@ -1127,6 +1129,13 @@
             const simW = sim ? sim.width  : canvas.width  / scale;
             const simH = sim ? sim.height : canvas.height / scale;
 
+            // Simulation box outline
+            if (this.boxColor) {
+                ctx.strokeStyle = this.boxColor;
+                ctx.lineWidth   = 1;
+                ctx.strokeRect(this._px(0), this._py(0), simW * scale, simH * scale);
+            }
+
             if (n > 1 && this.linksEnabled) {
                 const { x, y } = store;
                 const linkDist  = this.linkDist;
@@ -1163,12 +1172,12 @@
                         }
                     }, periodic);
 
-                    ctx.lineWidth = 0.8;
+                    ctx.lineWidth = Math.max(0.8, this.scale * 0.5);
                     for (let b = 0; b < LINK_BUCKETS; b++) {
                         const bkt = buckets[b];
                         if (!bkt.length) continue;
                         ctx.beginPath();
-                        ctx.strokeStyle = this.lineColor + ((b + 1) / LINK_BUCKETS * 0.5) + ')';
+                        ctx.strokeStyle = this.lineColor + ((b + 1) / LINK_BUCKETS * 0.7) + ')';
                         for (let k = 0; k < bkt.length; k += 4) {
                             ctx.moveTo((bkt[k]     - vX) * scale, (bkt[k + 1] - vY) * scale);
                             ctx.lineTo((bkt[k + 2] - vX) * scale, (bkt[k + 3] - vY) * scale);

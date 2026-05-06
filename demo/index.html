@@ -507,6 +507,7 @@ const renderer = new CanvasRenderer(canvas, {
     linkDist:      8,    // Å
     mouseLinkDist: 15,   // Å
     scale,               // px/Å
+    boxColor:      'rgba(255,255,255,0.25)',
 });
 
 // ── Builders ──────────────────────────────────────────────────────────
@@ -748,35 +749,26 @@ document.getElementById('boundary').addEventListener('change', e => {
 });
 
 // ── Mouse tracking + pan ──────────────────────────────────────────────
-// mousePixels: raw canvas pixel coords for renderer links/node drawing
-// mouse (MouseForce): Å coords for physics
-// Pan: middle-click or right-click drag
+// mousePixels: raw pixel coords for renderer; mouse (MouseForce): Å coords.
+// Pan: middle-click (buttons & 4) or right-click (buttons & 2) drag.
 const mousePixels = { x: null, y: null };
-let _panActive = false, _panLastX = 0, _panLastY = 0;
+let _panPrevX = null, _panPrevY = null;
 
-canvas.addEventListener('mousedown', e => {
-    if (e.button === 1 || e.button === 2) {
-        _panActive = true;
-        _panLastX  = e.clientX;
-        _panLastY  = e.clientY;
-        e.preventDefault();
-    }
-});
 canvas.addEventListener('mousemove', e => {
-    if (_panActive) {
-        renderer.viewX -= (e.clientX - _panLastX) / renderer.scale;
-        renderer.viewY -= (e.clientY - _panLastY) / renderer.scale;
-        _panLastX = e.clientX;
-        _panLastY = e.clientY;
+    const panning = (e.buttons & 2) || (e.buttons & 4); // right=2, middle=4
+    if (panning && _panPrevX !== null) {
+        renderer.viewX -= (e.clientX - _panPrevX) / renderer.scale;
+        renderer.viewY -= (e.clientY - _panPrevY) / renderer.scale;
         clampView();
     }
+    _panPrevX = e.clientX;
+    _panPrevY = e.clientY;
+
     mousePixels.x = e.clientX;
     mousePixels.y = e.clientY;
-    // Å position = pixel / scale + viewport offset
     mouse.setPosition(e.clientX / renderer.scale + renderer.viewX, e.clientY / renderer.scale + renderer.viewY);
 });
-canvas.addEventListener('mouseup',    e => { if (e.button === 1 || e.button === 2) _panActive = false; });
-canvas.addEventListener('mouseleave', e => { _panActive = false; mouse.clear(); mousePixels.x = mousePixels.y = null; });
+canvas.addEventListener('mouseleave', () => { _panPrevX = null; mouse.clear(); mousePixels.x = mousePixels.y = null; });
 canvas.addEventListener('contextmenu', e => e.preventDefault()); // suppress right-click menu
 
 // ── Viewport clamping ─────────────────────────────────────────────────
