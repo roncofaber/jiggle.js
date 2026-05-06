@@ -773,10 +773,16 @@ canvas.addEventListener('wheel', e => {
     document.getElementById('v-scale').value = +newScale.toFixed(2);
 }, { passive: false });
 
-// ── Resize — just update canvas; physical box and scale are unchanged ──
+// ── Resize — rescale to keep the sim box filling the canvas width ─────
 window.addEventListener('resize', () => {
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
+    scale = canvas.width / sim.width;
+    renderer.scale = scale;
+    renderer.viewX = 0;
+    renderer.viewY = 0;
+    document.getElementById('scale').value   = +scale.toFixed(2);
+    document.getElementById('v-scale').value = +scale.toFixed(2);
 });
 
 // ── FPS counter ───────────────────────────────────────────────────────
