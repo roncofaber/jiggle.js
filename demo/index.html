@@ -589,6 +589,24 @@ function refreshRadii(sp) {
     }
 }
 
+// Find a position at least minDist Å from every existing particle.
+// Falls back to a random position after 60 failed attempts.
+function sampleFreePosition(minDist) {
+    const { x, y, count } = sim.store;
+    const minD2 = minDist * minDist;
+    for (let attempt = 0; attempt < 60; attempt++) {
+        const px = Math.random() * sim.width;
+        const py = Math.random() * sim.height;
+        let ok = true;
+        for (let i = 0; i < count; i++) {
+            const dx = x[i] - px, dy = y[i] - py;
+            if (dx * dx + dy * dy < minD2) { ok = false; break; }
+        }
+        if (ok) return [px, py];
+    }
+    return [Math.random() * sim.width, Math.random() * sim.height];
+}
+
 // Add or remove particles of a species to reach sp.count.
 function reconcileCount(sp) {
     const store = sim.store;
@@ -598,12 +616,13 @@ function reconcileCount(sp) {
     }
     const delta = sp.count - current;
     if (delta > 0) {
+        const minPlaceDist = sp.sigma * 1.1; // ≈ LJ equilibrium distance
         for (let k = 0; k < delta; k++) {
             const r = sp.polydisperse
                 ? Math.max(0.2, gauss(sp.radius, sp.radiusStd))
                 : sp.radius;
-            sim.addParticle({ x: Math.random() * sim.width, y: Math.random() * sim.height,
-                              vx: 0, vy: 0, radius: r, mass: sp.mass, species: sp.id });
+            const [px, py] = sampleFreePosition(minPlaceDist);
+            sim.addParticle({ x: px, y: py, vx: 0, vy: 0, radius: r, mass: sp.mass, species: sp.id });
         }
     } else if (delta < 0) {
         let toRemove = -delta;
