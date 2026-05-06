@@ -637,7 +637,7 @@
     // Lennard-Jones 12-6 pair potential with shifted potential (V(rc) = 0).
     // f = 24ε/r² [2(σ/r)¹² − (σ/r)⁶], folding 1/r into the unit vector
     class LJForce {
-        constructor({ species = {}, cutoffMult = 2.5, minDistMult = 0.5, overrides = {} } = {}) {
+        constructor({ species = {}, cutoffMult = 2.5, cutoff = null, minDistMult = 0.5, overrides = {} } = {}) {
             const names = Object.keys(species);
             const n     = names.length;
 
@@ -650,7 +650,7 @@
                 for (let j = i; j < n; j++) {
                     const key = pairKey(names[i], names[j]);
                     const raw = key in overrides ? overrides[key] : ljMix(species[names[i]], species[names[j]]);
-                    const rc  = cutoffMult * raw.sigma;
+                    const rc  = cutoff ?? cutoffMult * raw.sigma;
                     if (rc > maxRc) maxRc = rc;
                     const minD = minDistMult * raw.sigma;
                     // Shifted potential: subtract V(rc) so energy → 0 continuously at cutoff.
@@ -1040,14 +1040,14 @@
             dotColor      = 'rgba(0,180,150,',
             lineColor     = 'rgba(0,160,140,',
             mouseColor    = 'rgba(168,96,14,',
-            linkDist      = 10,           // Å — roughly 3σ for argon-sized particles
+            linkDist      = 10,           // Å
             mouseLinkDist = 15,           // Å
             scale         = 1,            // pixels / Å
             colorMap      = {},
             drawParticle  = null, // (ctx, p) => void — custom particle drawing
             drawLink      = null, // (ctx, pi, pj, alpha) => void — custom link drawing
-            drawMouseLink = null, // (ctx, p, mouse, alpha) => void
-            drawMouseNode = null, // (ctx, mouse) => void
+            drawMouseLink = null, // (ctx, p, mouse, alpha) => void  (mouse is pixel {x,y})
+            drawMouseNode = null, // (ctx, mouse) => void            (mouse is pixel {x,y})
         } = {}) {
             this.canvas        = canvas;
             this.ctx           = canvas.getContext('2d');
@@ -1057,6 +1057,8 @@
             this.linkDist      = linkDist;
             this.mouseLinkDist = mouseLinkDist;
             this.scale         = scale;
+            this.viewX         = 0; // Å — viewport left edge in simulation space
+            this.viewY         = 0; // Å — viewport top  edge in simulation space
             this.linksEnabled      = true;
             this.mouseLinksEnabled = true;
             this.colorMap      = colorMap;
@@ -1064,12 +1066,12 @@
             this._drawLink        = drawLink      ?? null;
             this._drawMouseLink   = drawMouseLink ?? this._defaultDrawMouseLink.bind(this);
             this._drawMouseNode   = drawMouseNode ?? this._defaultDrawMouseNode.bind(this);
-            this._drawParticle    = drawParticle  ?? null; // null = use _defaultDrawParticle directly
+            this._drawParticle    = drawParticle  ?? null;
 
             this._grid    = new CellGrid();
             this._buckets = Array.from({ length: LINK_BUCKETS }, () => []);
 
-            // Reusable view objects for user-facing callbacks — avoids allocations per frame.
+            // Reused view objects for callbacks — avoids per-frame allocations.
             this._viewA = { x: 0, y: 0, radius: 0, species: '', vx: 0, vy: 0 };
             this._viewB = { x: 0, y: 0, radius: 0, species: '', vx: 0, vy: 0 };
         }
@@ -1083,13 +1085,16 @@
             v.vy      = store.vy[i];
         }
 
+        // Å → pixel helpers accounting for viewport offset
+        _px(ax) { return (ax - this.viewX) * this.scale; }
+        _py(ay) { return (ay - this.viewY) * this.scale; }
+
         _defaultDrawMouseLink(ctx, p, mouse, alpha) {
-            const s = this.scale;
             ctx.beginPath();
             ctx.strokeStyle = this.mouseColor + alpha + ')';
             ctx.lineWidth   = 1;
-            ctx.moveTo(mouse.x, mouse.y);
-            ctx.lineTo(p.x * s, p.y * s);
+            ctx.moveTo(mouse.x, mouse.y);                       // mouse is in pixels
+            ctx.lineTo(this._px(p.x), this._py(p.y));           // particle in Å → pixels
             ctx.stroke();
         }
 
@@ -1101,23 +1106,24 @@
         }
 
         _defaultDrawParticle(ctx, store, i) {
-            const s = this.scale;
             ctx.beginPath();
-            ctx.arc(store.x[i] * s, store.y[i] * s, store.radius[i] * s, 0, Math.PI * 2);
+            ctx.arc(this._px(store.x[i]), this._py(store.y[i]), store.radius[i] * this.scale, 0, Math.PI * 2);
             ctx.fillStyle = (this.colorMap[store.species[i]] ?? this.dotColor) + '0.7)';
             ctx.fill();
         }
 
-        // store: ParticleStore.  sim is optional; when provided and boundary is periodic,
-        // links crossing the boundary are drawn as two clipped half-segments.
+        // store: ParticleStore.
+        // mouse: { x, y } in PIXELS (or { x: null } when absent).
+        // sim: optional Simulation — used for box size and periodic boundary.
         render(store, mouse = { x: null, y: null }, sim = null) {
             const { ctx, canvas } = this;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             const scale = this.scale;
-            const n = store.count;
+            const vX    = this.viewX;
+            const vY    = this.viewY;
+            const n     = store.count;
 
-            // Simulation-space box dimensions (Å) for spatial indexing
             const simW = sim ? sim.width  : canvas.width  / scale;
             const simH = sim ? sim.height : canvas.height / scale;
 
@@ -1149,7 +1155,7 @@
                         const b     = Math.min(LINK_BUCKETS - 1, (alpha * LINK_BUCKETS / 0.5) | 0);
                         const bkt   = buckets[b];
 
-                        // Store in Å; multiply by scale when drawing
+                        // Store in Å; offset applied when drawing
                         bkt.push(x[i], y[i], x[i] - dx, y[i] - dy);
 
                         if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
@@ -1164,8 +1170,8 @@
                         ctx.beginPath();
                         ctx.strokeStyle = this.lineColor + ((b + 1) / LINK_BUCKETS * 0.5) + ')';
                         for (let k = 0; k < bkt.length; k += 4) {
-                            ctx.moveTo(bkt[k]     * scale, bkt[k + 1] * scale);
-                            ctx.lineTo(bkt[k + 2] * scale, bkt[k + 3] * scale);
+                            ctx.moveTo((bkt[k]     - vX) * scale, (bkt[k + 1] - vY) * scale);
+                            ctx.lineTo((bkt[k + 2] - vX) * scale, (bkt[k + 3] - vY) * scale);
                         }
                         ctx.stroke();
                     }
@@ -1196,11 +1202,11 @@
                 }
             }
 
-            // Mouse links — mouse coords are in pixels; convert to Å for distance math
+            // Mouse links — mouse.x/y are PIXEL coords; convert to Å for distances
             if (this.mouseLinksEnabled && mouse.x !== null) {
                 const { x, y } = store;
-                const mx = mouse.x / scale;
-                const my = mouse.y / scale;
+                const mx = mouse.x / scale + vX;   // pixels → Å
+                const my = mouse.y / scale + vY;
                 const mouseLinkDist  = this.mouseLinkDist;
                 const mouseLinkDist2 = mouseLinkDist * mouseLinkDist;
                 const drawMouseLink  = this._drawMouseLink;
@@ -1218,8 +1224,7 @@
                 this._drawMouseNode(ctx, mouse);
             }
 
-            // Particles — custom drawParticle receives a reused view object {x,y,radius,species,...}
-            // Note: x/y in view objects are in Å; multiply by renderer.scale in custom drawParticle.
+            // Particles
             const drawParticle = this._drawParticle;
             if (!drawParticle) {
                 for (let k = 0; k < n; k++) this._defaultDrawParticle(ctx, store, k);

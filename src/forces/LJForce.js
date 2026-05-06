@@ -4,7 +4,7 @@ import { CellGrid }        from '../utils/CellGrid.js';
 // Lennard-Jones 12-6 pair potential with shifted potential (V(rc) = 0).
 // f = 24ε/r² [2(σ/r)¹² − (σ/r)⁶], folding 1/r into the unit vector
 export class LJForce {
-    constructor({ species = {}, cutoffMult = 2.5, minDistMult = 0.5, overrides = {} } = {}) {
+    constructor({ species = {}, cutoffMult = 2.5, cutoff = null, minDistMult = 0.5, overrides = {} } = {}) {
         const names = Object.keys(species);
         const n     = names.length;
 
@@ -17,7 +17,7 @@ export class LJForce {
             for (let j = i; j < n; j++) {
                 const key = pairKey(names[i], names[j]);
                 const raw = key in overrides ? overrides[key] : ljMix(species[names[i]], species[names[j]]);
-                const rc  = cutoffMult * raw.sigma;
+                const rc  = cutoff ?? cutoffMult * raw.sigma;
                 if (rc > maxRc) maxRc = rc;
                 const minD = minDistMult * raw.sigma;
                 // Shifted potential: subtract V(rc) so energy → 0 continuously at cutoff.
