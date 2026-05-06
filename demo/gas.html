@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>jiggle.js — Ideal Gas</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #info {
+            position: fixed; top: 1rem; left: 1rem;
+            color: #6e7681; font-family: monospace; font-size: 0.75rem;
+            pointer-events: none; line-height: 1.6;
+        }
+        #info strong { color: #58a6ff; }
+        a.back { position: fixed; top: 1rem; right: 1rem; font-family: monospace;
+                 font-size: 0.75rem; color: #6e7681; text-decoration: none; }
+        a.back:hover { color: #58a6ff; }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">
+    <strong>Ideal Gas</strong><br>
+    T = <span id="temp">–</span> K &nbsp;|&nbsp; <span id="fps"></span>
+</div>
+<a class="back" href="index.html">← demos</a>
+
+<script type="module">
+import { Simulation, ThermalForce, LJForce, CanvasRenderer, ReflectiveBoundary }
+    from '../src/index.js';
+
+const canvas = document.getElementById('c');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// ── Parameters ────────────────────────────────────────────────────────
+const SIGMA = 3.4;    // Å
+const simW  = 500;    // Å — large dilute box
+const simH  = 380;    // Å
+
+// ── Simulation ────────────────────────────────────────────────────────
+const sim = Simulation.fromMixture(
+    [{ species: 'Ar', count: 80, radius: SIGMA * 0.5, mass: 39.95 }],
+    { width: simW, height: simH, boundary: new ReflectiveBoundary(), dt: 2 }
+);
+
+const lj      = new LJForce({ species: { Ar: { epsilon: 0.238, sigma: SIGMA } }, cutoff: 12 });
+const thermal = new ThermalForce({ temperature: 800, gamma: 0.002 });
+sim.addForce(lj).addForce(thermal);
+
+// ── Renderer ──────────────────────────────────────────────────────────
+const scale = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+const renderer = new CanvasRenderer(canvas, {
+    scale,
+    dotColor:      'rgba(220,120,60,',
+    lineColor:     'rgba(220,120,60,',
+    linksEnabled:  false,
+    boxColor:      'rgba(255,255,255,0.18)',
+});
+renderer.viewX = simW / 2 - canvas.width  / (2 * scale);
+renderer.viewY = simH / 2 - canvas.height / (2 * scale);
+
+// ── Loop ──────────────────────────────────────────────────────────────
+const tempEl = document.getElementById('temp');
+const fpsEl  = document.getElementById('fps');
+let lastT = performance.now(), frames = 0;
+
+function loop(now) {
+    for (let i = 0; i < 2; i++) sim.step();
+    renderer.render(sim.store, { x: null, y: null }, sim);
+    frames++;
+    if (now - lastT >= 1000) {
+        fpsEl.textContent  = Math.round(frames * 1000 / (now - lastT)) + ' fps';
+        tempEl.textContent = Math.round(sim.temperature());
+        frames = 0; lastT = now;
+    }
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    const s = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+    renderer.scale = s;
+    renderer.viewX = simW / 2 - canvas.width  / (2 * s);
+    renderer.viewY = simH / 2 - canvas.height / (2 * s);
+});
+</script>
+</body>
+</html>

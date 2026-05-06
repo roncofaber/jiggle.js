@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>jiggle.js — Flock</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #info {
+            position: fixed; top: 1rem; left: 1rem;
+            color: #6e7681; font-family: monospace; font-size: 0.75rem;
+            pointer-events: none; line-height: 1.6;
+        }
+        #info strong { color: #58a6ff; }
+        a.back { position: fixed; top: 1rem; right: 1rem; font-family: monospace;
+                 font-size: 0.75rem; color: #6e7681; text-decoration: none; }
+        a.back:hover { color: #58a6ff; }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">
+    <strong>Flock</strong> — separation · alignment · cohesion<br>
+    <span id="fps"></span>
+</div>
+<a class="back" href="index.html">← demos</a>
+
+<script type="module">
+import { Simulation, ThermalForce, FlockForce, CanvasRenderer, PeriodicBoundary }
+    from '../src/index.js';
+
+const canvas = document.getElementById('c');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const simW = 400, simH = 300;   // Å
+
+// ── Simulation ────────────────────────────────────────────────────────
+const sim = Simulation.fromMixture(
+    [{ species: 'bird', count: 200, radius: 1.2, mass: 1.0 }],
+    { width: simW, height: simH, boundary: new PeriodicBoundary(), dt: 1, maxSpeed: 30 }
+);
+
+const flock   = new FlockForce({ separationWeight: 0.3, alignmentWeight: 0.1, cohesionWeight: 0.05 });
+const thermal = new ThermalForce({ temperature: 30, gamma: 0.02 });
+sim.addForce(flock).addForce(thermal);
+
+// ── Custom particle drawing: oriented triangles ───────────────────────
+function drawBoid(ctx, p) {
+    const angle = Math.atan2(p.vy, p.vx);
+    const r     = Math.max(1, p.radius * renderer.scale);
+    ctx.save();
+    ctx.translate(renderer._px(p.x), renderer._py(p.y));
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo( r * 1.8,  0);
+    ctx.lineTo(-r * 1.0,  r * 0.7);
+    ctx.lineTo(-r * 1.0, -r * 0.7);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(160,220,100,0.8)';
+    ctx.fill();
+    ctx.restore();
+}
+
+// ── Renderer ──────────────────────────────────────────────────────────
+const scale = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+const renderer = new CanvasRenderer(canvas, {
+    scale,
+    linksEnabled:  false,
+    drawParticle:  drawBoid,
+    boxColor:      'rgba(255,255,255,0.10)',
+});
+renderer.viewX = simW / 2 - canvas.width  / (2 * scale);
+renderer.viewY = simH / 2 - canvas.height / (2 * scale);
+
+// ── Loop ──────────────────────────────────────────────────────────────
+const fpsEl = document.getElementById('fps');
+let lastT = performance.now(), frames = 0;
+
+function loop(now) {
+    for (let i = 0; i < 2; i++) sim.step();
+    renderer.render(sim.store, { x: null, y: null }, sim);
+    frames++;
+    if (now - lastT >= 1000) {
+        fpsEl.textContent = Math.round(frames * 1000 / (now - lastT)) + ' fps';
+        frames = 0; lastT = now;
+    }
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    const s = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+    renderer.scale = s;
+    renderer.viewX = simW / 2 - canvas.width  / (2 * s);
+    renderer.viewY = simH / 2 - canvas.height / (2 * s);
+});
+</script>
+</body>
+</html>

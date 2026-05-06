@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>jiggle.js — Crystal</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #info {
+            position: fixed; top: 1rem; left: 1rem;
+            color: #6e7681; font-family: monospace; font-size: 0.75rem;
+            pointer-events: none;
+        }
+        #info strong { color: #58a6ff; }
+        a.back { position: fixed; top: 1rem; right: 1rem; font-family: monospace;
+                 font-size: 0.75rem; color: #6e7681; text-decoration: none; }
+        a.back:hover { color: #58a6ff; }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">
+    <strong>Crystal</strong> — argon, T = <span id="temp">–</span> K<br>
+    <span id="fps"></span>
+</div>
+<a class="back" href="index.html">← demos</a>
+
+<script type="module">
+import { Simulation, ThermalForce, LJForce, CanvasRenderer, PeriodicBoundary }
+    from '../src/index.js';
+
+const canvas = document.getElementById('c');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// ── Parameters ────────────────────────────────────────────────────────
+const SIGMA   = 3.4;                          // Å — argon LJ diameter
+const SPACING = Math.pow(2, 1/6) * SIGMA;    // ≈ 3.82 Å — energy minimum
+const COLS = 22, ROWS = 17;
+const simW = COLS * SPACING;
+const simH = ROWS * SPACING;
+
+// ── Simulation ────────────────────────────────────────────────────────
+const sim = Simulation.fromGrid(COLS, ROWS, {
+    spacing:        SPACING,
+    particleRadius: SIGMA * 0.5,
+    species:        'Ar',
+    width:          simW,
+    height:         simH,
+    boundary:       new PeriodicBoundary(),
+});
+sim.dt = 0.5;   // fs — small step for stability at high density
+
+const lj      = new LJForce({ species: { Ar: { epsilon: 0.238, sigma: SIGMA } }, cutoff: 12 });
+const thermal = new ThermalForce({ temperature: 10, gamma: 0.05 });
+sim.addForce(lj).addForce(thermal);
+
+// ── Renderer ──────────────────────────────────────────────────────────
+const scale = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+const renderer = new CanvasRenderer(canvas, {
+    scale,
+    dotColor:  'rgba(80,180,220,',
+    lineColor: 'rgba(80,180,220,',
+    linkDist:  SPACING * 1.25,   // show nearest-neighbour bonds only
+    boxColor:  'rgba(255,255,255,0.12)',
+});
+// Centre the box in the viewport
+renderer.viewX = simW / 2 - canvas.width  / (2 * scale);
+renderer.viewY = simH / 2 - canvas.height / (2 * scale);
+
+// ── Loop ──────────────────────────────────────────────────────────────
+const tempEl = document.getElementById('temp');
+const fpsEl  = document.getElementById('fps');
+let lastT = performance.now(), frames = 0;
+
+function loop(now) {
+    for (let i = 0; i < 4; i++) sim.step();
+    renderer.render(sim.store, { x: null, y: null }, sim);
+    frames++;
+    if (now - lastT >= 1000) {
+        fpsEl.textContent  = Math.round(frames * 1000 / (now - lastT)) + ' fps';
+        tempEl.textContent = Math.round(sim.temperature());
+        frames = 0; lastT = now;
+    }
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    const s = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+    renderer.scale = s;
+    renderer.viewX = simW / 2 - canvas.width  / (2 * s);
+    renderer.viewY = simH / 2 - canvas.height / (2 * s);
+});
+</script>
+</body>
+</html>

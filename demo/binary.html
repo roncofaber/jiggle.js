@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>jiggle.js — Binary Mixture</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #info {
+            position: fixed; top: 1rem; left: 1rem;
+            color: #6e7681; font-family: monospace; font-size: 0.75rem;
+            pointer-events: none; line-height: 1.6;
+        }
+        #info strong { color: #58a6ff; }
+        .dot { font-size: 0.65rem; }
+        a.back { position: fixed; top: 1rem; right: 1rem; font-family: monospace;
+                 font-size: 0.75rem; color: #6e7681; text-decoration: none; }
+        a.back:hover { color: #58a6ff; }
+    </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">
+    <strong>Binary Mixture</strong> — Kob–Andersen glass-former<br>
+    <span class="dot" style="color:#00d4b0">●</span> A (80%)
+    &nbsp;
+    <span class="dot" style="color:#dc643c">●</span> B (20%)<br>
+    T = <span id="temp">–</span> K &nbsp;|&nbsp; <span id="fps"></span>
+</div>
+<a class="back" href="index.html">← demos</a>
+
+<script type="module">
+import { Simulation, ThermalForce, LJForce, CanvasRenderer, PeriodicBoundary }
+    from '../src/index.js';
+
+const canvas = document.getElementById('c');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// ── Kob–Andersen parameters (adapted to kcal/mol, Å, amu) ────────────
+// Original reduced units: σ_AA=1, σ_BB=0.88, σ_AB=0.8
+//                         ε_AA=1, ε_BB=0.5,  ε_AB=1.5
+// Mapped: σ_AA = 3.4 Å, ε_AA = 0.238 kcal/mol (argon-like A)
+const S_AA = 3.4,  E_AA = 0.238;
+const S_BB = 2.99, E_BB = 0.119;
+const S_AB = 2.72, E_AB = 0.357;
+
+const N = 200;
+const nA = Math.round(N * 0.8);
+const nB = N - nA;
+
+// Box at reduced density ρ* ≈ 1.2 (solid/glassy regime in 2D)
+const rho = 1.2 / (S_AA * S_AA);  // particles/Å²
+const simW = Math.sqrt(N / rho);
+const simH = simW;
+
+// ── Simulation ────────────────────────────────────────────────────────
+const sim = Simulation.fromMixture([
+    { species: 'A', count: nA, radius: S_AA * 0.5, mass: 39.95 },
+    { species: 'B', count: nB, radius: S_BB * 0.5, mass: 20.0  },
+], { width: simW, height: simH, boundary: new PeriodicBoundary(), dt: 1 });
+
+const lj = new LJForce({
+    species:   { A: { epsilon: E_AA, sigma: S_AA }, B: { epsilon: E_BB, sigma: S_BB } },
+    overrides: { 'A-B': { epsilon: E_AB, sigma: S_AB } },
+    cutoff:    12,
+});
+const thermal = new ThermalForce({ temperature: 200, gamma: 0.01 });
+sim.addForce(lj).addForce(thermal);
+
+// ── Renderer ──────────────────────────────────────────────────────────
+const scale = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+const renderer = new CanvasRenderer(canvas, {
+    scale,
+    colorMap:  { A: 'rgba(0,212,176,', B: 'rgba(220,100,60,' },
+    lineColor: 'rgba(120,180,165,',
+    linkDist:  S_AA * 1.4,
+    boxColor:  'rgba(255,255,255,0.12)',
+});
+renderer.viewX = simW / 2 - canvas.width  / (2 * scale);
+renderer.viewY = simH / 2 - canvas.height / (2 * scale);
+
+// ── Loop ──────────────────────────────────────────────────────────────
+const tempEl = document.getElementById('temp');
+const fpsEl  = document.getElementById('fps');
+let lastT = performance.now(), frames = 0;
+
+function loop(now) {
+    for (let i = 0; i < 3; i++) sim.step();
+    renderer.render(sim.store, { x: null, y: null }, sim);
+    frames++;
+    if (now - lastT >= 1000) {
+        fpsEl.textContent  = Math.round(frames * 1000 / (now - lastT)) + ' fps';
+        tempEl.textContent = Math.round(sim.temperature());
+        frames = 0; lastT = now;
+    }
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    const s = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+    renderer.scale = s;
+    renderer.viewX = simW / 2 - canvas.width  / (2 * s);
+    renderer.viewY = simH / 2 - canvas.height / (2 * s);
+});
+</script>
+</body>
+</html>
