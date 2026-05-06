@@ -7,8 +7,9 @@ export class CanvasRenderer {
         dotColor      = 'rgba(0,180,150,',
         lineColor     = 'rgba(0,160,140,',
         mouseColor    = 'rgba(168,96,14,',
-        linkDist      = 130,
-        mouseLinkDist = 160,
+        linkDist      = 10,           // Å — roughly 3σ for argon-sized particles
+        mouseLinkDist = 15,           // Å
+        scale         = 1,            // pixels / Å
         colorMap      = {},
         drawParticle  = null, // (ctx, p) => void — custom particle drawing
         drawLink      = null, // (ctx, pi, pj, alpha) => void — custom link drawing
@@ -22,6 +23,7 @@ export class CanvasRenderer {
         this.mouseColor    = mouseColor;
         this.linkDist      = linkDist;
         this.mouseLinkDist = mouseLinkDist;
+        this.scale         = scale;
         this.linksEnabled      = true;
         this.mouseLinksEnabled = true;
         this.colorMap      = colorMap;
@@ -49,11 +51,12 @@ export class CanvasRenderer {
     }
 
     _defaultDrawMouseLink(ctx, p, mouse, alpha) {
+        const s = this.scale;
         ctx.beginPath();
         ctx.strokeStyle = this.mouseColor + alpha + ')';
         ctx.lineWidth   = 1;
         ctx.moveTo(mouse.x, mouse.y);
-        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(p.x * s, p.y * s);
         ctx.stroke();
     }
 
@@ -65,8 +68,9 @@ export class CanvasRenderer {
     }
 
     _defaultDrawParticle(ctx, store, i) {
+        const s = this.scale;
         ctx.beginPath();
-        ctx.arc(store.x[i], store.y[i], store.radius[i], 0, Math.PI * 2);
+        ctx.arc(store.x[i] * s, store.y[i] * s, store.radius[i] * s, 0, Math.PI * 2);
         ctx.fillStyle = (this.colorMap[store.species[i]] ?? this.dotColor) + '0.7)';
         ctx.fill();
     }
@@ -77,7 +81,13 @@ export class CanvasRenderer {
         const { ctx, canvas } = this;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        const scale = this.scale;
         const n = store.count;
+
+        // Simulation-space box dimensions (Å) for spatial indexing
+        const simW = sim ? sim.width  : canvas.width  / scale;
+        const simH = sim ? sim.height : canvas.height / scale;
+
         if (n > 1 && this.linksEnabled) {
             const { x, y } = store;
             const linkDist  = this.linkDist;
@@ -85,7 +95,7 @@ export class CanvasRenderer {
             const bc        = sim?.boundary ?? null;
             const periodic  = bc?.isPeriodic ?? false;
 
-            this._grid.build(store, linkDist, canvas.width, canvas.height);
+            this._grid.build(store, linkDist, simW, simH);
 
             if (!this._drawLink) {
                 const buckets = this._buckets;
@@ -106,9 +116,10 @@ export class CanvasRenderer {
                     const b     = Math.min(LINK_BUCKETS - 1, (alpha * LINK_BUCKETS / 0.5) | 0);
                     const bkt   = buckets[b];
 
+                    // Store in Å; multiply by scale when drawing
                     bkt.push(x[i], y[i], x[i] - dx, y[i] - dy);
 
-                    if (periodic && (Math.abs(dx - dxr) > 0.5 || Math.abs(dy - dyr) > 0.5)) {
+                    if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
                         bkt.push(x[j] + dx, y[j] + dy, x[j], y[j]);
                     }
                 }, periodic);
@@ -120,8 +131,8 @@ export class CanvasRenderer {
                     ctx.beginPath();
                     ctx.strokeStyle = this.lineColor + ((b + 1) / LINK_BUCKETS * 0.5) + ')';
                     for (let k = 0; k < bkt.length; k += 4) {
-                        ctx.moveTo(bkt[k],     bkt[k + 1]);
-                        ctx.lineTo(bkt[k + 2], bkt[k + 3]);
+                        ctx.moveTo(bkt[k]     * scale, bkt[k + 1] * scale);
+                        ctx.lineTo(bkt[k + 2] * scale, bkt[k + 3] * scale);
                     }
                     ctx.stroke();
                 }
@@ -144,7 +155,7 @@ export class CanvasRenderer {
                     this._fillView(vb, store, j);
                     drawLink(ctx, va, vb, alpha);
 
-                    if (periodic && (Math.abs(dx - dxr) > 0.5 || Math.abs(dy - dyr) > 0.5)) {
+                    if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
                         vb.x = x[j] + dx; vb.y = y[j] + dy;
                         drawLink(ctx, va, vb, alpha);
                     }
@@ -152,16 +163,18 @@ export class CanvasRenderer {
             }
         }
 
-        // Mouse links
+        // Mouse links — mouse coords are in pixels; convert to Å for distance math
         if (this.mouseLinksEnabled && mouse.x !== null) {
             const { x, y } = store;
+            const mx = mouse.x / scale;
+            const my = mouse.y / scale;
             const mouseLinkDist  = this.mouseLinkDist;
             const mouseLinkDist2 = mouseLinkDist * mouseLinkDist;
             const drawMouseLink  = this._drawMouseLink;
             const va = this._viewA;
             for (let k = 0; k < n; k++) {
-                const dx = x[k] - mouse.x;
-                const dy = y[k] - mouse.y;
+                const dx = x[k] - mx;
+                const dy = y[k] - my;
                 const d2 = dx * dx + dy * dy;
                 if (d2 >= mouseLinkDist2) continue;
 
@@ -173,6 +186,7 @@ export class CanvasRenderer {
         }
 
         // Particles — custom drawParticle receives a reused view object {x,y,radius,species,...}
+        // Note: x/y in view objects are in Å; multiply by renderer.scale in custom drawParticle.
         const drawParticle = this._drawParticle;
         if (!drawParticle) {
             for (let k = 0; k < n; k++) this._defaultDrawParticle(ctx, store, k);

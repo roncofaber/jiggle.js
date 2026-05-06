@@ -32,7 +32,7 @@ export class ParticleStore {
         this._cap = cap2;
     }
 
-    add({ x, y, vx = 0, vy = 0, radius = 2, mass = null, species = 'default' }) {
+    add({ x, y, vx = 0, vy = 0, radius = 2, mass = 1.0, species = 'default' }) {
         if (this.count >= this._cap) this._grow();
         const i         = this.count++;
         this.x[i]       = x;
@@ -42,7 +42,7 @@ export class ParticleStore {
         this.fx[i]      = 0;
         this.fy[i]      = 0;
         this.radius[i]  = radius;
-        this.mass[i]    = mass ?? radius * radius;
+        this.mass[i]    = mass;
         this.species[i] = species;
         return i;
     }

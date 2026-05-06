@@ -18,3 +18,4 @@ export { PeriodicBoundary }   from './boundaries/PeriodicBoundary.js';
 export { ReflectiveBoundary } from './boundaries/ReflectiveBoundary.js';
 export { AbsorbingBoundary }  from './boundaries/AbsorbingBoundary.js';
 export { CellGrid }           from './utils/CellGrid.js';
+export { KB, FORCE_CONV }    from './utils/units.js';

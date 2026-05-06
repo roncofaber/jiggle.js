@@ -32,7 +32,7 @@ class ParticleStore {
         this._cap = cap2;
     }
 
-    add({ x, y, vx = 0, vy = 0, radius = 2, mass = null, species = 'default' }) {
+    add({ x, y, vx = 0, vy = 0, radius = 2, mass = 1.0, species = 'default' }) {
         if (this.count >= this._cap) this._grow();
         const i         = this.count++;
         this.x[i]       = x;
@@ -42,7 +42,7 @@ class ParticleStore {
         this.fx[i]      = 0;
         this.fy[i]      = 0;
         this.radius[i]  = radius;
-        this.mass[i]    = mass ?? radius * radius;
+        this.mass[i]    = mass;
         this.species[i] = species;
         return i;
     }
@@ -88,6 +88,11 @@ class PeriodicBoundary {
     }
 }
 
+// Physical constants for LAMMPS "real" unit system.
+// Distance: Å  |  Time: fs  |  Energy: kcal/mol  |  Mass: amu  |  Force: kcal/(mol·Å)
+const KB         = 0.001987;   // kcal / (mol·K)  — Boltzmann constant
+const FORCE_CONV = 4.184e-4;   // (Å/fs)² per (kcal/mol) per amu  (= 1/mvv2e, LAMMPS real)
+
 class Simulation {
     constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50, dt = 1 } = {}) {
         this.width    = width;
@@ -95,27 +100,27 @@ class Simulation {
         this.boundary = boundary;
         this.maxSpeed = maxSpeed;
         this.dt       = dt;
+        this._fconv   = FORCE_CONV;
         this.forces   = [];
         this.store    = new ParticleStore(Math.max(count, 32));
         for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
     }
 
     _mkDesc(species = 'default') {
-        const radius = Math.random() * 2 + 1.2;
         return {
             x:  Math.random() * this.width,
             y:  Math.random() * this.height,
-            vx: (Math.random() - 0.5) * 0.56,
-            vy: (Math.random() - 0.5) * 0.56,
-            radius,
+            vx: 0,
+            vy: 0,
+            radius: 1.7,
             species,
         };
     }
 
     // ── Structured initialisers ───────────────────────────────────────
 
-    static fromMixture(groups, { width = 800, height = 600, boundary } = {}) {
-        const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+    static fromMixture(groups, { width = 800, height = 600, boundary, dt, maxSpeed } = {}) {
+        const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt && { dt }), ...(maxSpeed && { maxSpeed }) });
         const total = groups.reduce((s, g) => s + g.count, 0);
 
         // Jittered grid — prevents LJ blowup from overlapping random starts
@@ -139,22 +144,16 @@ class Simulation {
         }
 
         let idx = 0;
-        for (const { species, count, radius, radiusMin, radiusMax, radiusSampler } of groups) {
+        for (const { species, count, radius, radiusMin, radiusMax, radiusSampler, mass = 1.0 } of groups) {
             for (let i = 0; i < count; i++) {
                 const r = radiusSampler
                     ? radiusSampler()
                     : (radius
                         ?? (radiusMin !== undefined
                             ? radiusMin + Math.random() * ((radiusMax ?? radiusMin) - radiusMin)
-                            : Math.random() * 2 + 1.2));
+                            : 1.7));
                 const [x, y] = positions[idx++] ?? [Math.random() * width, Math.random() * height];
-                sim.store.add({
-                    x, y,
-                    vx: (Math.random() - 0.5) * 0.56,
-                    vy: (Math.random() - 0.5) * 0.56,
-                    radius: r,
-                    species,
-                });
+                sim.store.add({ x, y, vx: 0, vy: 0, radius: r, mass, species });
             }
         }
         return sim;
@@ -237,9 +236,10 @@ class Simulation {
         return ke;
     }
 
-    // Mean kinetic energy per particle (= kBT in 2D by equipartition: KE = N·kBT).
+    // Instantaneous temperature in Kelvin (2D equipartition: KE = N·kBT, T = KE/(N·kB)).
     temperature() {
-        return this.store.count ? this.kineticEnergy() / this.store.count : 0;
+        const n = this.store.count;
+        return n ? this.kineticEnergy() / (n * KB) : 0;
     }
 
     // ── Resize ────────────────────────────────────────────────────────
@@ -268,13 +268,14 @@ class Simulation {
     step(context = {}) {
         const store = this.store;
         const { x, y, vx, vy, fx, fy, mass } = store;
-        const n  = store.count;
-        const dt = this.dt;
+        const n     = store.count;
+        const dt    = this.dt;
+        const fconv = this._fconv;
 
         // ── B: first half-kick ───────────────────────────────────────
         for (let i = 0; i < n; i++) {
-            vx[i] += 0.5 * dt * fx[i] / mass[i];
-            vy[i] += 0.5 * dt * fy[i] / mass[i];
+            vx[i] += 0.5 * dt * fconv * fx[i] / mass[i];
+            vy[i] += 0.5 * dt * fconv * fy[i] / mass[i];
         }
 
         // ── A: first half-drift ──────────────────────────────────────
@@ -311,8 +312,8 @@ class Simulation {
         const maxSpeed2 = this.maxSpeed * this.maxSpeed;
         const n2 = store.count; // may differ after filterParticles
         for (let i = 0; i < n2; i++) {
-            vx[i] += 0.5 * dt * fx[i] / mass[i];
-            vy[i] += 0.5 * dt * fy[i] / mass[i];
+            vx[i] += 0.5 * dt * fconv * fx[i] / mass[i];
+            vy[i] += 0.5 * dt * fconv * fy[i] / mass[i];
 
             if (!isFinite(vx[i]) || !isFinite(vy[i])) { vx[i] = 0; vy[i] = 0; }
 
@@ -349,8 +350,9 @@ class Particle {
 // FDT is enforced automatically: c2 is derived from c1 and temperature, not independent.
 //
 // Parameters:
-//   temperature  — kBT in simulation energy units
-//   gamma        — friction coefficient (1/timestep); typical range 0.001–0.05
+//   temperature  — target temperature in Kelvin
+//   gamma        — friction coefficient in 1/fs; typical range 0.001–0.1
+
 let _spare = null;
 function randG() {
     if (_spare !== null) { const s = _spare; _spare = null; return s; }
@@ -363,16 +365,17 @@ function randG() {
 }
 
 class ThermalForce {
-    constructor({ temperature = 0.03, gamma = 0.006 } = {}) {
-        this.temperature = temperature; // kBT
-        this.gamma       = gamma;       // friction coefficient (1/timestep)
+    constructor({ temperature = 300, gamma = 0.01 } = {}) {
+        this.temperature = temperature; // K
+        this.gamma       = gamma;       // 1/fs
         this.isLangevin  = true;        // signals BAOAB integrator to place this in the O slot
     }
 
     apply(store, sim) {
         const { vx, vy, mass, count } = store;
+        const kBT  = KB * this.temperature;                        // kcal/mol
         const c1   = Math.exp(-this.gamma * (sim?.dt ?? 1));
-        const c2sq = (1 - c1 * c1) * this.temperature;
+        const c2sq = (1 - c1 * c1) * kBT * (sim?._fconv ?? FORCE_CONV); // Å²/fs² (mass-free)
         for (let i = 0; i < count; i++) {
             const c2 = Math.sqrt(c2sq / mass[i]);
             vx[i] = c1 * vx[i] + c2 * randG();
@@ -584,19 +587,22 @@ class MouseLJForce {
     }
 }
 
-// Constant downward (or directional) gravity
+// Constant directional gravity. gx/gy are accelerations in Å/fs².
+// Internally scales to kcal/(mol·Å) via FORCE_CONV so the BAOAB integrator
+// produces the correct acceleration regardless of particle mass.
+
 class GravityForce {
-    constructor({ gx = 0, gy = 0.05 } = {}) {
-        this.gx = gx;
-        this.gy = gy;
+    constructor({ gx = 0, gy = 0 } = {}) {
+        this.gx = gx; // Å/fs²
+        this.gy = gy; // Å/fs²
     }
 
     apply(store) {
         const { fx, fy, mass, count } = store;
         const { gx, gy } = this;
         for (let i = 0; i < count; i++) {
-            fx[i] += gx * mass[i];
-            fy[i] += gy * mass[i];
+            fx[i] += gx * mass[i] / FORCE_CONV;
+            fy[i] += gy * mass[i] / FORCE_CONV;
         }
     }
 }
@@ -905,32 +911,34 @@ class VortexForce {
     }
 }
 
-// Soft repulsion from the canvas edges — a gentler alternative to ReflectiveBoundary.
-// Particles feel no force when further than `margin` from a wall; force grows as a
-// power law as they enter the margin zone, reaching `strength` at the wall itself.
+// Soft repulsion from box edges — a gentler alternative to ReflectiveBoundary.
+// Particles feel no force beyond `margin` (Å) from a wall; force grows as a
+// power law reaching `strength` (Å/fs²) at the wall itself.
+
 class BoundaryForce {
-    constructor({ margin = 60, strength = 0.4, power = 2 } = {}) {
-        this.margin   = margin;
-        this.strength = strength;
+    constructor({ margin = 30, strength = 0.05, power = 2 } = {}) {
+        this.margin   = margin;   // Å
+        this.strength = strength; // Å/fs² at wall (acceleration)
         this.power    = power;
     }
 
     apply(store, sim) {
         const { x, y, fx, fy, count } = store;
-        const { margin, strength, power } = this;
+        const { margin, power } = this;
+        const str       = this.strength / FORCE_CONV; // convert to kcal/(mol·Å) equivalent
         const { width, height } = sim;
         const invMargin = 1 / margin;
 
         for (let i = 0; i < count; i++) {
             if (x[i] < margin) {
-                fx[i] += strength * Math.pow((margin - x[i]) * invMargin, power);
+                fx[i] += str * Math.pow((margin - x[i]) * invMargin, power);
             } else if (x[i] > width - margin) {
-                fx[i] -= strength * Math.pow((x[i] - (width - margin)) * invMargin, power);
+                fx[i] -= str * Math.pow((x[i] - (width - margin)) * invMargin, power);
             }
             if (y[i] < margin) {
-                fy[i] += strength * Math.pow((margin - y[i]) * invMargin, power);
+                fy[i] += str * Math.pow((margin - y[i]) * invMargin, power);
             } else if (y[i] > height - margin) {
-                fy[i] -= strength * Math.pow((y[i] - (height - margin)) * invMargin, power);
+                fy[i] -= str * Math.pow((y[i] - (height - margin)) * invMargin, power);
             }
         }
     }
@@ -1026,8 +1034,9 @@ class CanvasRenderer {
         dotColor      = 'rgba(0,180,150,',
         lineColor     = 'rgba(0,160,140,',
         mouseColor    = 'rgba(168,96,14,',
-        linkDist      = 130,
-        mouseLinkDist = 160,
+        linkDist      = 10,           // Å — roughly 3σ for argon-sized particles
+        mouseLinkDist = 15,           // Å
+        scale         = 1,            // pixels / Å
         colorMap      = {},
         drawParticle  = null, // (ctx, p) => void — custom particle drawing
         drawLink      = null, // (ctx, pi, pj, alpha) => void — custom link drawing
@@ -1041,6 +1050,7 @@ class CanvasRenderer {
         this.mouseColor    = mouseColor;
         this.linkDist      = linkDist;
         this.mouseLinkDist = mouseLinkDist;
+        this.scale         = scale;
         this.linksEnabled      = true;
         this.mouseLinksEnabled = true;
         this.colorMap      = colorMap;
@@ -1068,11 +1078,12 @@ class CanvasRenderer {
     }
 
     _defaultDrawMouseLink(ctx, p, mouse, alpha) {
+        const s = this.scale;
         ctx.beginPath();
         ctx.strokeStyle = this.mouseColor + alpha + ')';
         ctx.lineWidth   = 1;
         ctx.moveTo(mouse.x, mouse.y);
-        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(p.x * s, p.y * s);
         ctx.stroke();
     }
 
@@ -1084,8 +1095,9 @@ class CanvasRenderer {
     }
 
     _defaultDrawParticle(ctx, store, i) {
+        const s = this.scale;
         ctx.beginPath();
-        ctx.arc(store.x[i], store.y[i], store.radius[i], 0, Math.PI * 2);
+        ctx.arc(store.x[i] * s, store.y[i] * s, store.radius[i] * s, 0, Math.PI * 2);
         ctx.fillStyle = (this.colorMap[store.species[i]] ?? this.dotColor) + '0.7)';
         ctx.fill();
     }
@@ -1096,7 +1108,13 @@ class CanvasRenderer {
         const { ctx, canvas } = this;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        const scale = this.scale;
         const n = store.count;
+
+        // Simulation-space box dimensions (Å) for spatial indexing
+        const simW = sim ? sim.width  : canvas.width  / scale;
+        const simH = sim ? sim.height : canvas.height / scale;
+
         if (n > 1 && this.linksEnabled) {
             const { x, y } = store;
             const linkDist  = this.linkDist;
@@ -1104,7 +1122,7 @@ class CanvasRenderer {
             const bc        = sim?.boundary ?? null;
             const periodic  = bc?.isPeriodic ?? false;
 
-            this._grid.build(store, linkDist, canvas.width, canvas.height);
+            this._grid.build(store, linkDist, simW, simH);
 
             if (!this._drawLink) {
                 const buckets = this._buckets;
@@ -1125,9 +1143,10 @@ class CanvasRenderer {
                     const b     = Math.min(LINK_BUCKETS - 1, (alpha * LINK_BUCKETS / 0.5) | 0);
                     const bkt   = buckets[b];
 
+                    // Store in Å; multiply by scale when drawing
                     bkt.push(x[i], y[i], x[i] - dx, y[i] - dy);
 
-                    if (periodic && (Math.abs(dx - dxr) > 0.5 || Math.abs(dy - dyr) > 0.5)) {
+                    if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
                         bkt.push(x[j] + dx, y[j] + dy, x[j], y[j]);
                     }
                 }, periodic);
@@ -1139,8 +1158,8 @@ class CanvasRenderer {
                     ctx.beginPath();
                     ctx.strokeStyle = this.lineColor + ((b + 1) / LINK_BUCKETS * 0.5) + ')';
                     for (let k = 0; k < bkt.length; k += 4) {
-                        ctx.moveTo(bkt[k],     bkt[k + 1]);
-                        ctx.lineTo(bkt[k + 2], bkt[k + 3]);
+                        ctx.moveTo(bkt[k]     * scale, bkt[k + 1] * scale);
+                        ctx.lineTo(bkt[k + 2] * scale, bkt[k + 3] * scale);
                     }
                     ctx.stroke();
                 }
@@ -1163,7 +1182,7 @@ class CanvasRenderer {
                     this._fillView(vb, store, j);
                     drawLink(ctx, va, vb, alpha);
 
-                    if (periodic && (Math.abs(dx - dxr) > 0.5 || Math.abs(dy - dyr) > 0.5)) {
+                    if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
                         vb.x = x[j] + dx; vb.y = y[j] + dy;
                         drawLink(ctx, va, vb, alpha);
                     }
@@ -1171,16 +1190,18 @@ class CanvasRenderer {
             }
         }
 
-        // Mouse links
+        // Mouse links — mouse coords are in pixels; convert to Å for distance math
         if (this.mouseLinksEnabled && mouse.x !== null) {
             const { x, y } = store;
+            const mx = mouse.x / scale;
+            const my = mouse.y / scale;
             const mouseLinkDist  = this.mouseLinkDist;
             const mouseLinkDist2 = mouseLinkDist * mouseLinkDist;
             const drawMouseLink  = this._drawMouseLink;
             const va = this._viewA;
             for (let k = 0; k < n; k++) {
-                const dx = x[k] - mouse.x;
-                const dy = y[k] - mouse.y;
+                const dx = x[k] - mx;
+                const dy = y[k] - my;
                 const d2 = dx * dx + dy * dy;
                 if (d2 >= mouseLinkDist2) continue;
 
@@ -1192,6 +1213,7 @@ class CanvasRenderer {
         }
 
         // Particles — custom drawParticle receives a reused view object {x,y,radius,species,...}
+        // Note: x/y in view objects are in Å; multiply by renderer.scale in custom drawParticle.
         const drawParticle = this._drawParticle;
         if (!drawParticle) {
             for (let k = 0; k < n; k++) this._defaultDrawParticle(ctx, store, k);
@@ -1242,4 +1264,4 @@ class AbsorbingBoundary {
     }
 }
 
-export { AbsorbingBoundary, AttractorForce, BoundaryForce, CanvasRenderer, CellGrid, FlockForce, GravityForce, LJForce, MorseForce, MouseForce, MouseLJForce, Particle, ParticleStore, PeriodicBoundary, ReflectiveBoundary, RepulsionForce, Simulation, SpringForce, ThermalForce, VortexForce };
+export { AbsorbingBoundary, AttractorForce, BoundaryForce, CanvasRenderer, CellGrid, FORCE_CONV, FlockForce, GravityForce, KB, LJForce, MorseForce, MouseForce, MouseLJForce, Particle, ParticleStore, PeriodicBoundary, ReflectiveBoundary, RepulsionForce, Simulation, SpringForce, ThermalForce, VortexForce };

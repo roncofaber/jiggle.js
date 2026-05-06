@@ -244,14 +244,14 @@
         <button class="section-header"><span>Thermal</span><span class="chevron">›</span></button>
         <div class="section-body"><div class="section-inner"><div class="section-content">
             <div class="row">
-                <span class="row-label">kBT</span>
-                <input type="range" id="kbt" min="0" max="0.3" step="0.002" value="0.03">
-                <input type="number" class="row-val" id="v-kbt" value="0.03">
+                <span class="row-label">T (K)</span>
+                <input type="range" id="kbt" min="0" max="2000" step="10" value="300">
+                <input type="number" class="row-val" id="v-kbt" value="300">
             </div>
             <div class="row">
-                <span class="row-label">damping γ</span>
-                <input type="range" id="gamma" min="0" max="0.05" step="0.001" value="0.006">
-                <input type="number" class="row-val" id="v-gamma" value="0.006">
+                <span class="row-label">γ (1/fs)</span>
+                <input type="range" id="gamma" min="0" max="0.1" step="0.001" value="0.01">
+                <input type="number" class="row-val" id="v-gamma" value="0.01">
             </div>
             <hr class="sep">
             <div class="row">
@@ -260,8 +260,8 @@
                 <input type="number" class="row-val" id="v-steps" value="1">
             </div>
             <div class="row">
-                <span class="row-label">dt</span>
-                <input type="range" id="dt" min="0.01" max="1" step="0.01" value="1">
+                <span class="row-label">dt (fs)</span>
+                <input type="range" id="dt" min="0.1" max="5" step="0.1" value="1">
                 <input type="number" class="row-val" id="v-dt" value="1">
             </div>
         </div></div></div>
@@ -278,14 +278,14 @@
                 <label class="toggle"><input type="checkbox" id="bf-on"><span class="toggle-track"></span></label>
             </div>
             <div class="row">
-                <span class="row-label">margin</span>
-                <input type="range" id="bf-margin" min="10" max="200" step="5" value="60">
-                <input type="number" class="row-val" id="v-bf-margin" value="60">
+                <span class="row-label">margin (Å)</span>
+                <input type="range" id="bf-margin" min="1" max="100" step="1" value="20">
+                <input type="number" class="row-val" id="v-bf-margin" value="20">
             </div>
             <div class="row">
-                <span class="row-label">strength</span>
-                <input type="range" id="bf-strength" min="0" max="2" step="0.05" value="0.4">
-                <input type="number" class="row-val" id="v-bf-strength" value="0.4">
+                <span class="row-label">strength (Å/fs²)</span>
+                <input type="range" id="bf-strength" min="0" max="0.5" step="0.005" value="0.05">
+                <input type="number" class="row-val" id="v-bf-strength" value="0.05">
             </div>
 
             <hr class="sep">
@@ -296,8 +296,8 @@
             </div>
             <div class="row">
                 <span class="row-label">strength</span>
-                <input type="range" id="att-strength" min="0" max="0.3" step="0.005" value="0.05">
-                <input type="number" class="row-val" id="v-att-strength" value="0.05">
+                <input type="range" id="att-strength" min="0" max="200" step="1" value="50">
+                <input type="number" class="row-val" id="v-att-strength" value="50">
             </div>
             <div class="row">
                 <span class="row-label">falloff</span>
@@ -313,8 +313,8 @@
             </div>
             <div class="row">
                 <span class="row-label">strength</span>
-                <input type="range" id="vx-strength" min="-0.2" max="0.2" step="0.005" value="0.05">
-                <input type="number" class="row-val" id="v-vx-strength" value="0.05">
+                <input type="range" id="vx-strength" min="-200" max="200" step="1" value="50">
+                <input type="number" class="row-val" id="v-vx-strength" value="50">
             </div>
 
             <hr class="sep">
@@ -354,20 +354,20 @@
             <div class="sub-label">FORCE</div>
             <div class="row">
                 <span class="row-label">strength</span>
-                <input type="range" id="mouseStr" min="0" max="0.2" step="0.005" value="0.06">
-                <input type="number" class="row-val" id="v-mouseStr" value="0.06">
+                <input type="range" id="mouseStr" min="0" max="5" step="0.05" value="1">
+                <input type="number" class="row-val" id="v-mouseStr" value="1">
             </div>
             <div class="row">
-                <span class="row-label">distance</span>
-                <input type="range" id="mouseDist" min="20" max="300" step="5" value="120">
-                <input type="number" class="row-val" id="v-mouseDist" value="120">
+                <span class="row-label">distance (Å)</span>
+                <input type="range" id="mouseDist" min="2" max="50" step="0.5" value="10">
+                <input type="number" class="row-val" id="v-mouseDist" value="10">
             </div>
             <hr class="sep">
             <div class="sub-label">LINKS</div>
             <div class="row">
-                <span class="row-label">distance</span>
-                <input type="range" id="mouseLinkDist" min="50" max="400" step="5" value="140">
-                <input type="number" class="row-val" id="v-mouseLinkDist" value="140">
+                <span class="row-label">distance (Å)</span>
+                <input type="range" id="mouseLinkDist" min="3" max="50" step="0.5" value="15">
+                <input type="number" class="row-val" id="v-mouseLinkDist" value="15">
             </div>
         </div></div></div>
     </div>
@@ -378,8 +378,8 @@
         <div class="section-body"><div class="section-inner"><div class="section-content">
             <div class="sub-label">GRAVITY</div>
             <div class="row">
-                <span class="row-label">y</span>
-                <input type="range" id="gravity" min="-0.1" max="0.1" step="0.002" value="0">
+                <span class="row-label">gy (Å/fs²)</span>
+                <input type="range" id="gravity" min="-0.005" max="0.005" step="0.0001" value="0">
                 <input type="number" class="row-val" id="v-gravity" value="0">
             </div>
             <hr class="sep">
@@ -393,15 +393,22 @@
                 </select>
             </div>
             <hr class="sep">
+            <div class="sub-label">SCALE</div>
+            <div class="row">
+                <span class="row-label">px/Å</span>
+                <input type="range" id="scale" min="0.5" max="10" step="0.5" value="2">
+                <input type="number" class="row-val" id="v-scale" value="2">
+            </div>
+            <hr class="sep">
             <div class="sub-label">LINKS</div>
             <div class="toggle-row">
                 <span class="toggle-label">enabled</span>
                 <label class="toggle"><input type="checkbox" id="links-on" checked><span class="toggle-track"></span></label>
             </div>
             <div class="row">
-                <span class="row-label">distance</span>
-                <input type="range" id="linkdist" min="50" max="300" step="5" value="100">
-                <input type="number" class="row-val" id="v-linkdist" value="100">
+                <span class="row-label">distance (Å)</span>
+                <input type="range" id="linkdist" min="2" max="30" step="0.5" value="8">
+                <input type="number" class="row-val" id="v-linkdist" value="8">
             </div>
         </div></div></div>
     </div>
@@ -451,21 +458,27 @@ function gauss(mean, std) {
     return mean + std * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-// ── Species state ─────────────────────────────────────────────────────
+// ── Simulation scale ──────────────────────────────────────────────────
+// positions/distances in Å; canvas displays at `scale` pixels/Å
+let scale = 2;   // px/Å — 400 Å box fits an 800 px canvas width
+const simW = () => canvas.width  / scale;
+const simH = () => canvas.height / scale;
+
+// ── Species state (all sizes in Å, energy in kcal/mol, mass in amu) ───
 let speciesList = [
-    { id: 'A', palette: PALETTE[0], count: 35,  radius: 3,   epsilon: 0.003, sigma: 22, polydisperse: false, radiusStd: 0.5 },
-    { id: 'B', palette: PALETTE[1], count: 20,  radius: 2.5, epsilon: 0.002, sigma: 14, polydisperse: false, radiusStd: 0.5 },
+    { id: 'A', palette: PALETTE[0], count: 60, radius: 1.7, epsilon: 0.238, sigma: 3.4, mass: 39.95, polydisperse: false, radiusStd: 0.3 },
+    { id: 'B', palette: PALETTE[1], count: 30, radius: 1.3, epsilon: 0.14,  sigma: 2.6, mass: 20.0,  polydisperse: false, radiusStd: 0.2 },
 ];
 let activeSpeciesIdx = 0;
 
 // ── Forces ────────────────────────────────────────────────────────────
-const thermal   = new ThermalForce({ temperature: 0.03, gamma: 0.006 });
-const gravity   = new GravityForce({ gy: 0 });
-const mouse     = new MouseForce({ dist: 120, strength: 0.06 });
-const attractor = new AttractorForce({ x: canvas.width / 2, y: canvas.height / 2, strength: 0.05 });
-const vortex    = new VortexForce({ x: canvas.width / 2, y: canvas.height / 2, strength: 0.05 });
-const boundary_f = new BoundaryForce({ margin: 60, strength: 0.4 });
-const flock     = new FlockForce();
+const thermal    = new ThermalForce({ temperature: 300, gamma: 0.01 });
+const gravity    = new GravityForce({ gy: 0 });
+const mouse      = new MouseForce({ dist: 10, strength: 1.0 });
+const attractor  = new AttractorForce({ x: simW() / 2, y: simH() / 2, strength: 50 });
+const vortex     = new VortexForce({ x: simW() / 2, y: simH() / 2, strength: 50 });
+const boundary_f = new BoundaryForce({ margin: 20, strength: 0.05 });
+const flock      = new FlockForce();
 
 // Start field forces disabled
 attractor.enabled  = false;
@@ -481,8 +494,9 @@ const renderer = new CanvasRenderer(canvas, {
     colorMap:      colorMap(),
     lineColor:     'rgba(120,180,165,',
     mouseColor:    'rgba(168,96,14,',
-    linkDist:      100,
-    mouseLinkDist: 140,
+    linkDist:      8,    // Å
+    mouseLinkDist: 15,   // Å
+    scale,               // px/Å
 });
 
 // ── Builders ──────────────────────────────────────────────────────────
@@ -503,11 +517,12 @@ function buildSim() {
         speciesList.map(sp => ({
             species: sp.id,
             count:   sp.count,
+            mass:    sp.mass,
             ...(sp.polydisperse
-                ? { radiusSampler: () => Math.max(0.5, gauss(sp.radius, sp.radiusStd)) }
+                ? { radiusSampler: () => Math.max(0.2, gauss(sp.radius, sp.radiusStd)) }
                 : { radius: sp.radius }),
         })),
-        { width: canvas.width, height: canvas.height }
+        { width: simW(), height: simH(), dt: 1 }
     );
     s.addForce(thermal).addForce(lj).addForce(mouse).addForce(gravity)
      .addForce(boundary_f).addForce(attractor).addForce(vortex).addForce(flock);
@@ -521,8 +536,10 @@ function rebuildLJ() {
 }
 
 function rebuildSim() {
+    const prevDt = sim?.dt ?? 1;
     lj  = buildLJ();
     sim = buildSim();
+    sim.dt = prevDt;
     renderer.colorMap = colorMap();
 }
 
@@ -530,12 +547,13 @@ function rebuildSim() {
 function addSpecies() {
     const id = nextAvailableLabel();
     if (!id) return;
-    const palette     = nextAvailablePalette();
-    const count       = Math.max(1,    Math.round(gauss(22, 7)));
-    const radius      = Math.max(0.5,  gauss(2.5, 0.6));
-    const epsilon     = Math.max(0,    gauss(0.002, 0.0005));
-    const sigma       = Math.max(2,    gauss(16, 4));
-    speciesList.push({ id, palette, count, radius: +radius.toFixed(2), epsilon: +epsilon.toFixed(4), sigma: +sigma.toFixed(1), polydisperse: false, radiusStd: 0.5 });
+    const palette = nextAvailablePalette();
+    const sigma   = Math.max(1.5, gauss(3.0, 0.8));
+    const epsilon = Math.max(0.01, gauss(0.2, 0.08));
+    const mass    = Math.max(4, gauss(30, 15));
+    const radius  = sigma * 0.5;
+    const count   = Math.max(1, Math.round(gauss(20, 6)));
+    speciesList.push({ id, palette, count, radius: +radius.toFixed(2), epsilon: +epsilon.toFixed(3), sigma: +sigma.toFixed(2), mass: +mass.toFixed(2), polydisperse: false, radiusStd: 0.2 });
     activeSpeciesIdx = speciesList.length - 1;
     rebuildSim();
     renderSpeciesTabs();
@@ -603,8 +621,9 @@ function renderSpeciesPanel() {
     const sp = speciesList[activeSpeciesIdx];
 
     const rows = [
-        ['count',  { min: 1,   max: 120,  step: 1      }, () => sp.count,   v => { sp.count   = v; rebuildSim(); }],
-        ['radius', { min: 0.5, max: 12,   step: 0.5    }, () => sp.radius,  v => { sp.radius  = v; rebuildSim(); }],
+        ['count',     { min: 1,   max: 200,  step: 1    }, () => sp.count,   v => { sp.count   = v; rebuildSim(); }],
+        ['radius (Å)',{ min: 0.1, max: 8,    step: 0.1  }, () => sp.radius,  v => { sp.radius  = v; rebuildSim(); }],
+        ['mass (amu)',{ min: 1,   max: 300,  step: 0.5  }, () => sp.mass,    v => { sp.mass    = v; rebuildSim(); }],
     ];
     for (const r of rows) panel.appendChild(makeRow(...r));
 
@@ -630,8 +649,8 @@ function renderSpeciesPanel() {
     const sep = document.createElement('hr'); sep.className = 'sep'; panel.appendChild(sep);
 
     const ljRows = [
-        ['ε', { min: 0, max: 0.02, step: 0.0001 }, () => sp.epsilon, v => { sp.epsilon = v; rebuildLJ(); }],
-        ['σ', { min: 2, max: 80,   step: 1      }, () => sp.sigma,   v => { sp.sigma   = v; rebuildLJ(); }],
+        ['ε (kcal/mol)', { min: 0, max: 5,  step: 0.01 }, () => sp.epsilon, v => { sp.epsilon = v; rebuildLJ(); }],
+        ['σ (Å)',        { min: 0.5, max: 15, step: 0.1 }, () => sp.sigma,   v => { sp.sigma   = v; rebuildLJ(); }],
     ];
     for (const r of ljRows) panel.appendChild(makeRow(...r));
 
@@ -673,6 +692,14 @@ wire('kbt',           v => thermal.temperature      = v);
 wire('gamma',         v => thermal.gamma            = v);
 wire('steps',         v => stepsPerFrame            = v);
 wire('dt',            v => sim.dt                   = v);
+wire('scale', v => {
+    scale = v;
+    renderer.scale = v;
+    const newW = canvas.width / v, newH = canvas.height / v;
+    sim.resize(newW, newH);
+    attractor.x = vortex.x = newW / 2;
+    attractor.y = vortex.y = newH / 2;
+});
 
 wireCheck('bf-on',    v => boundary_f.enabled       = v);
 wire('bf-margin',     v => boundary_f.margin        = v);
@@ -707,17 +734,26 @@ document.getElementById('boundary').addEventListener('change', e => {
     sim.boundary = map[e.target.value];
 });
 
-// ── Mouse tracking ────────────────────────────────────────────────────
-canvas.addEventListener('mousemove', e => mouse.setPosition(e.clientX, e.clientY));
+// ── Mouse tracking — convert pixel → Å ───────────────────────────────
+canvas.addEventListener('mousemove', e => mouse.setPosition(e.clientX / renderer.scale, e.clientY / renderer.scale));
 canvas.addEventListener('mouseleave', () => mouse.clear());
 
-// ── Resize ────────────────────────────────────────────────────────────
+// ── Resize — keep physical box, update scale to maintain view ─────────
 window.addEventListener('resize', () => {
+    const oldSimW = sim.width;
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
-    sim.resize(canvas.width, canvas.height);
-    attractor.x = vortex.x = canvas.width  / 2;
-    attractor.y = vortex.y = canvas.height / 2;
+    const newScale = canvas.width / oldSimW;
+    scale = newScale;
+    renderer.scale = newScale;
+    const scaleSlider = document.getElementById('scale');
+    if (scaleSlider) {
+        scaleSlider.value = +newScale.toFixed(2);
+        document.getElementById('v-scale').value = +newScale.toFixed(2);
+    }
+    sim.resize(canvas.width / newScale, canvas.height / newScale);
+    attractor.x = vortex.x = sim.width  / 2;
+    attractor.y = vortex.y = sim.height / 2;
 });
 
 // ── FPS counter ───────────────────────────────────────────────────────

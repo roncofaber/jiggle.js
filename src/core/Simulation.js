@@ -1,5 +1,6 @@
 import { ParticleStore }     from './ParticleStore.js';
 import { PeriodicBoundary }  from '../boundaries/PeriodicBoundary.js';
+import { FORCE_CONV, KB }    from '../utils/units.js';
 
 export class Simulation {
     constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50, dt = 1 } = {}) {
@@ -8,27 +9,27 @@ export class Simulation {
         this.boundary = boundary;
         this.maxSpeed = maxSpeed;
         this.dt       = dt;
+        this._fconv   = FORCE_CONV;
         this.forces   = [];
         this.store    = new ParticleStore(Math.max(count, 32));
         for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
     }
 
     _mkDesc(species = 'default') {
-        const radius = Math.random() * 2 + 1.2;
         return {
             x:  Math.random() * this.width,
             y:  Math.random() * this.height,
-            vx: (Math.random() - 0.5) * 0.56,
-            vy: (Math.random() - 0.5) * 0.56,
-            radius,
+            vx: 0,
+            vy: 0,
+            radius: 1.7,
             species,
         };
     }
 
     // ── Structured initialisers ───────────────────────────────────────
 
-    static fromMixture(groups, { width = 800, height = 600, boundary } = {}) {
-        const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+    static fromMixture(groups, { width = 800, height = 600, boundary, dt, maxSpeed } = {}) {
+        const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt && { dt }), ...(maxSpeed && { maxSpeed }) });
         const total = groups.reduce((s, g) => s + g.count, 0);
 
         // Jittered grid — prevents LJ blowup from overlapping random starts
@@ -52,22 +53,16 @@ export class Simulation {
         }
 
         let idx = 0;
-        for (const { species, count, radius, radiusMin, radiusMax, radiusSampler } of groups) {
+        for (const { species, count, radius, radiusMin, radiusMax, radiusSampler, mass = 1.0 } of groups) {
             for (let i = 0; i < count; i++) {
                 const r = radiusSampler
                     ? radiusSampler()
                     : (radius
                         ?? (radiusMin !== undefined
                             ? radiusMin + Math.random() * ((radiusMax ?? radiusMin) - radiusMin)
-                            : Math.random() * 2 + 1.2));
+                            : 1.7));
                 const [x, y] = positions[idx++] ?? [Math.random() * width, Math.random() * height];
-                sim.store.add({
-                    x, y,
-                    vx: (Math.random() - 0.5) * 0.56,
-                    vy: (Math.random() - 0.5) * 0.56,
-                    radius: r,
-                    species,
-                });
+                sim.store.add({ x, y, vx: 0, vy: 0, radius: r, mass, species });
             }
         }
         return sim;
@@ -150,9 +145,10 @@ export class Simulation {
         return ke;
     }
 
-    // Mean kinetic energy per particle (= kBT in 2D by equipartition: KE = N·kBT).
+    // Instantaneous temperature in Kelvin (2D equipartition: KE = N·kBT, T = KE/(N·kB)).
     temperature() {
-        return this.store.count ? this.kineticEnergy() / this.store.count : 0;
+        const n = this.store.count;
+        return n ? this.kineticEnergy() / (n * KB) : 0;
     }
 
     // ── Resize ────────────────────────────────────────────────────────
@@ -181,13 +177,14 @@ export class Simulation {
     step(context = {}) {
         const store = this.store;
         const { x, y, vx, vy, fx, fy, mass } = store;
-        const n  = store.count;
-        const dt = this.dt;
+        const n     = store.count;
+        const dt    = this.dt;
+        const fconv = this._fconv;
 
         // ── B: first half-kick ───────────────────────────────────────
         for (let i = 0; i < n; i++) {
-            vx[i] += 0.5 * dt * fx[i] / mass[i];
-            vy[i] += 0.5 * dt * fy[i] / mass[i];
+            vx[i] += 0.5 * dt * fconv * fx[i] / mass[i];
+            vy[i] += 0.5 * dt * fconv * fy[i] / mass[i];
         }
 
         // ── A: first half-drift ──────────────────────────────────────
@@ -224,8 +221,8 @@ export class Simulation {
         const maxSpeed2 = this.maxSpeed * this.maxSpeed;
         const n2 = store.count; // may differ after filterParticles
         for (let i = 0; i < n2; i++) {
-            vx[i] += 0.5 * dt * fx[i] / mass[i];
-            vy[i] += 0.5 * dt * fy[i] / mass[i];
+            vx[i] += 0.5 * dt * fconv * fx[i] / mass[i];
+            vy[i] += 0.5 * dt * fconv * fy[i] / mass[i];
 
             if (!isFinite(vx[i]) || !isFinite(vy[i])) { vx[i] = 0; vy[i] = 0; }
 
