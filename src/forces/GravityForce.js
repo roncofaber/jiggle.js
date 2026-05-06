@@ -5,10 +5,12 @@ export class GravityForce {
         this.gy = gy;
     }
 
-    apply(particles) {
-        for (const p of particles) {
-            p.fx += this.gx * p.mass;
-            p.fy += this.gy * p.mass;
+    apply(store) {
+        const { fx, fy, mass, count } = store;
+        const { gx, gy } = this;
+        for (let i = 0; i < count; i++) {
+            fx[i] += gx * mass[i];
+            fy[i] += gy * mass[i];
         }
     }
 }

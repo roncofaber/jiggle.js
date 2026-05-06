@@ -1,29 +1,40 @@
+import { CellGrid } from '../utils/CellGrid.js';
+
 // Pairwise soft repulsion between all particles
 export class RepulsionForce {
-    constructor({ dist = 45, strength = 0.06 } = {}) {
-        this.dist     = dist;
-        this.strength = strength;
+    constructor({ dist = 45, strength = 0.06, minDistFrac = 0.05 } = {}) {
+        this.dist        = dist;
+        this.strength    = strength;
+        this.minDistFrac = minDistFrac;
+        this._grid       = new CellGrid();
     }
 
-    apply(particles, sim) {
-        const dist2 = this.dist * this.dist;
-        const bc    = sim?.boundary;
+    apply(store, sim) {
+        const { x, y, fx, fy, count } = store;
+        const dist     = this.dist;
+        const dist2    = dist * dist;
+        const strength = this.strength;
+        const minD2    = (dist * this.minDistFrac) ** 2;
+        const bc       = sim?.boundary;
+        const periodic = bc?.isPeriodic ?? false;
 
-        for (let i = 0; i < particles.length; i++) {
-            for (let j = i + 1; j < particles.length; j++) {
-                let dx = particles[i].x - particles[j].x;
-                let dy = particles[i].y - particles[j].y;
-                if (bc) [dx, dy] = bc.minImage(dx, dy, sim);
-                const d2 = dx * dx + dy * dy;
-                if (d2 === 0 || d2 >= dist2) continue;
+        this._grid.build(store, dist, sim.width, sim.height);
 
-                const d  = Math.sqrt(d2);
-                const f  = (1 - d / this.dist) * this.strength / d;
-                particles[i].fx += f * dx;
-                particles[i].fy += f * dy;
-                particles[j].fx -= f * dx;
-                particles[j].fy -= f * dy;
+        this._grid.forEachPair(count, (i, j) => {
+            let dx = x[i] - x[j];
+            let dy = y[i] - y[j];
+            if (periodic) {
+                const mi = bc.minImage(dx, dy, sim);
+                dx = mi[0]; dy = mi[1];
             }
-        }
+            const d2 = dx * dx + dy * dy;
+            if (d2 === 0 || d2 >= dist2) return;
+
+            const d2eff = d2 < minD2 ? minD2 : d2;
+            const d     = Math.sqrt(d2eff);
+            const f     = (1 - d / dist) * strength / d;
+            fx[i] += f * dx;  fy[i] += f * dy;
+            fx[j] -= f * dx;  fy[j] -= f * dy;
+        }, periodic);
     }
 }

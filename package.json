@@ -14,7 +14,7 @@
   "scripts": {
     "build": "rollup -c",
     "dev": "rollup -c -w",
-    "demo": "npx serve demo"
+    "demo": "npx serve . --listen 3000"
   },
   "keywords": ["canvas", "physics", "particles", "animation", "2d"],
   "author": "Fabrice Roncoroni",

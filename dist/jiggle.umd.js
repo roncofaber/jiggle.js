@@ -4,6 +4,331 @@
     (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.Jiggle = {}));
 })(this, (function (exports) { 'use strict';
 
+    // Structure-of-Arrays particle container.
+    // Each field is a typed Float32Array; string species is a plain Array.
+    // Removal is O(1) swap-with-last; addition doubles capacity when full.
+    class ParticleStore {
+        constructor(capacity = 256) {
+            this._cap    = capacity;
+            this.count   = 0;
+            this.x       = new Float32Array(capacity);
+            this.y       = new Float32Array(capacity);
+            this.vx      = new Float32Array(capacity);
+            this.vy      = new Float32Array(capacity);
+            this.fx      = new Float32Array(capacity);
+            this.fy      = new Float32Array(capacity);
+            this.radius  = new Float32Array(capacity);
+            this.mass    = new Float32Array(capacity);
+            this.species = new Array(capacity).fill('');
+        }
+
+        _grow() {
+            const cap2 = this._cap * 2;
+            const grow = arr => { const n = new Float32Array(cap2); n.set(arr); return n; };
+            this.x       = grow(this.x);
+            this.y       = grow(this.y);
+            this.vx      = grow(this.vx);
+            this.vy      = grow(this.vy);
+            this.fx      = grow(this.fx);
+            this.fy      = grow(this.fy);
+            this.radius  = grow(this.radius);
+            this.mass    = grow(this.mass);
+            this.species.length = cap2;
+            this.species.fill('', this._cap);
+            this._cap = cap2;
+        }
+
+        add({ x, y, vx = 0, vy = 0, radius = 2, mass = null, species = 'default' }) {
+            if (this.count >= this._cap) this._grow();
+            const i         = this.count++;
+            this.x[i]       = x;
+            this.y[i]       = y;
+            this.vx[i]      = vx;
+            this.vy[i]      = vy;
+            this.fx[i]      = 0;
+            this.fy[i]      = 0;
+            this.radius[i]  = radius;
+            this.mass[i]    = mass ?? radius * radius;
+            this.species[i] = species;
+            return i;
+        }
+
+        // O(1) removal: fills slot i with the last particle, then shrinks count.
+        remove(i) {
+            const last = --this.count;
+            if (i === last) return;
+            this.x[i]       = this.x[last];
+            this.y[i]       = this.y[last];
+            this.vx[i]      = this.vx[last];
+            this.vy[i]      = this.vy[last];
+            this.fx[i]      = this.fx[last];
+            this.fy[i]      = this.fy[last];
+            this.radius[i]  = this.radius[last];
+            this.mass[i]    = this.mass[last];
+            this.species[i] = this.species[last];
+        }
+
+        resetForces() {
+            this.fx.fill(0, 0, this.count);
+            this.fy.fill(0, 0, this.count);
+        }
+    }
+
+    class PeriodicBoundary {
+        isPeriodic = true;
+
+        constructor() {
+            this._mi = new Float64Array(2);
+        }
+
+        applyPosition(store, i, sim) {
+            store.x[i] = ((store.x[i] % sim.width)  + sim.width)  % sim.width;
+            store.y[i] = ((store.y[i] % sim.height) + sim.height) % sim.height;
+        }
+
+        // Returns a reused Float64Array — read immediately, do not store the reference.
+        minImage(dx, dy, sim) {
+            this._mi[0] = dx - sim.width  * Math.round(dx / sim.width);
+            this._mi[1] = dy - sim.height * Math.round(dy / sim.height);
+            return this._mi;
+        }
+    }
+
+    class Simulation {
+        constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50 } = {}) {
+            this.width    = width;
+            this.height   = height;
+            this.boundary = boundary;
+            this.maxSpeed = maxSpeed;
+            this.forces   = [];
+            this.store    = new ParticleStore(Math.max(count, 32));
+            for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
+        }
+
+        _mkDesc(species = 'default') {
+            const radius = Math.random() * 2 + 1.2;
+            return {
+                x:  Math.random() * this.width,
+                y:  Math.random() * this.height,
+                vx: (Math.random() - 0.5) * 0.56,
+                vy: (Math.random() - 0.5) * 0.56,
+                radius,
+                species,
+            };
+        }
+
+        // ── Structured initialisers ───────────────────────────────────────
+
+        static fromMixture(groups, { width = 800, height = 600, boundary } = {}) {
+            const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+            const total = groups.reduce((s, g) => s + g.count, 0);
+
+            // Jittered grid — prevents LJ blowup from overlapping random starts
+            const cols  = Math.ceil(Math.sqrt(total * width / height));
+            const rows  = Math.ceil(total / cols);
+            const cellW = width  / cols;
+            const cellH = height / rows;
+            const positions = [];
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (positions.length >= total) break;
+                    positions.push([
+                        (c + 0.5 + (Math.random() - 0.5) * 0.6) * cellW,
+                        (r + 0.5 + (Math.random() - 0.5) * 0.6) * cellH,
+                    ]);
+                }
+            }
+            for (let i = positions.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [positions[i], positions[j]] = [positions[j], positions[i]];
+            }
+
+            let idx = 0;
+            for (const { species, count, radius, radiusMin, radiusMax, radiusSampler } of groups) {
+                for (let i = 0; i < count; i++) {
+                    const r = radiusSampler
+                        ? radiusSampler()
+                        : (radius
+                            ?? (radiusMin !== undefined
+                                ? radiusMin + Math.random() * ((radiusMax ?? radiusMin) - radiusMin)
+                                : Math.random() * 2 + 1.2));
+                    const [x, y] = positions[idx++] ?? [Math.random() * width, Math.random() * height];
+                    sim.store.add({
+                        x, y,
+                        vx: (Math.random() - 0.5) * 0.56,
+                        vy: (Math.random() - 0.5) * 0.56,
+                        radius: r,
+                        species,
+                    });
+                }
+            }
+            return sim;
+        }
+
+        // Particles evenly spaced on a circle.
+        static fromRing(count, {
+            radius = 200, cx, cy, species = 'default',
+            particleRadius = 2, width = 800, height = 600, boundary,
+        } = {}) {
+            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+            const ox  = cx ?? width  / 2;
+            const oy  = cy ?? height / 2;
+            for (let i = 0; i < count; i++) {
+                const angle = (2 * Math.PI * i) / count;
+                sim.store.add({
+                    x: ox + radius * Math.cos(angle),
+                    y: oy + radius * Math.sin(angle),
+                    species,
+                    radius: particleRadius,
+                });
+            }
+            return sim;
+        }
+
+        // Particles on a regular lattice.
+        static fromGrid(cols, rows, {
+            spacing = 30, ox, oy, species = 'default',
+            particleRadius = 2, width = 800, height = 600, boundary,
+        } = {}) {
+            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+            const x0  = ox ?? (width  - (cols - 1) * spacing) / 2;
+            const y0  = oy ?? (height - (rows - 1) * spacing) / 2;
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    sim.store.add({
+                        x: x0 + c * spacing,
+                        y: y0 + r * spacing,
+                        species,
+                        radius: particleRadius,
+                    });
+                }
+            }
+            return sim;
+        }
+
+        // ── Particle management ───────────────────────────────────────────
+
+        addParticle(descriptor) {
+            this.store.add(descriptor);
+            return this;
+        }
+
+        // Remove by index (O(1) swap-with-last).
+        removeParticle(index) {
+            this.store.remove(index);
+            return this;
+        }
+
+        // ── Force management ──────────────────────────────────────────────
+
+        addForce(force) {
+            this.forces.push(force);
+            return this;
+        }
+
+        removeForce(force) {
+            this.forces = this.forces.filter(f => f !== force);
+            return this;
+        }
+
+        // ── Queries ───────────────────────────────────────────────────────
+
+        get particleCount() { return this.store.count; }
+
+        kineticEnergy() {
+            const { vx, vy, mass, count } = this.store;
+            let ke = 0;
+            for (let i = 0; i < count; i++) ke += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
+            return ke;
+        }
+
+        // Mean kinetic energy per particle (= kBT in 2D by equipartition: KE = N·kBT).
+        temperature() {
+            return this.store.count ? this.kineticEnergy() / this.store.count : 0;
+        }
+
+        // ── Resize ────────────────────────────────────────────────────────
+
+        resize(width, height) {
+            const sx = width  / this.width;
+            const sy = height / this.height;
+            this.width  = width;
+            this.height = height;
+            const { x, y, count } = this.store;
+            for (let i = 0; i < count; i++) { x[i] *= sx; y[i] *= sy; }
+        }
+
+        // ── Step (BAOAB Langevin integrator) ─────────────────────────────
+        //
+        // B  v += ½ F/m            (half-kick, forces carried from previous step)
+        // A  x += ½ v              (half-drift)
+        // O  Ornstein-Uhlenbeck    (ThermalForce; isLangevin = true)
+        // A  x += ½ v  + boundary  (half-drift)
+        // [recompute conservative forces at new positions]
+        // B  v += ½ F/m            (half-kick)
+        //
+        // Forces p.fx/fy are initialised to 0 by ParticleStore and reset before
+        // each force evaluation, so the first step correctly uses F=0 for the first B.
+
+        step(context = {}) {
+            const store = this.store;
+            const { x, y, vx, vy, fx, fy, mass } = store;
+            const n = store.count;
+
+            // ── B: first half-kick ───────────────────────────────────────
+            for (let i = 0; i < n; i++) {
+                vx[i] += 0.5 * fx[i] / mass[i];
+                vy[i] += 0.5 * fy[i] / mass[i];
+            }
+
+            // ── A: first half-drift ──────────────────────────────────────
+            for (let i = 0; i < n; i++) {
+                x[i] += 0.5 * vx[i];
+                y[i] += 0.5 * vy[i];
+            }
+
+            // ── O: Langevin thermostat ───────────────────────────────────
+            for (const force of this.forces) {
+                if (force.enabled === false || !force.isLangevin) continue;
+                force.apply(store, this, context);
+            }
+
+            // ── A: second half-drift + boundary ──────────────────────────
+            for (let i = 0; i < n; i++) {
+                x[i] += 0.5 * vx[i];
+                y[i] += 0.5 * vy[i];
+                this.boundary.applyPosition(store, i, this);
+            }
+
+            if (this.boundary.filterParticles) {
+                this.boundary.filterParticles(store, this);
+            }
+
+            // ── Recompute conservative forces at new positions ────────────
+            store.resetForces();
+            for (const force of this.forces) {
+                if (force.enabled === false || force.isLangevin) continue;
+                force.apply(store, this, context);
+            }
+
+            // ── B: second half-kick + guards ─────────────────────────────
+            const maxSpeed2 = this.maxSpeed * this.maxSpeed;
+            const n2 = store.count; // may differ after filterParticles
+            for (let i = 0; i < n2; i++) {
+                vx[i] += 0.5 * fx[i] / mass[i];
+                vy[i] += 0.5 * fy[i] / mass[i];
+
+                if (!isFinite(vx[i]) || !isFinite(vy[i])) { vx[i] = 0; vy[i] = 0; }
+
+                const s2 = vx[i] * vx[i] + vy[i] * vy[i];
+                if (s2 > maxSpeed2) {
+                    const inv = this.maxSpeed / Math.sqrt(s2);
+                    vx[i] *= inv; vy[i] *= inv;
+                }
+            }
+        }
+    }
+
     class Particle {
         constructor({ x, y, vx = 0, vy = 0, radius = 2, mass = null, species = 'default' }) {
             this.x       = x;
@@ -23,174 +348,171 @@
         }
     }
 
-    class PeriodicBoundary {
-        applyPosition(p, sim) {
-            p.x = ((p.x % sim.width)  + sim.width)  % sim.width;
-            p.y = ((p.y % sim.height) + sim.height) % sim.height;
-        }
-
-        minImage(dx, dy, sim) {
-            return [
-                dx - sim.width  * Math.round(dx / sim.width),
-                dy - sim.height * Math.round(dy / sim.height),
-            ];
-        }
-    }
-
-    class Simulation {
-        constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary() } = {}) {
-            this.width    = width;
-            this.height   = height;
-            this.boundary = boundary;
-            this.forces   = [];
-            this.particles = Array.from({ length: count }, () => this._mkParticle());
-        }
-
-        _mkParticle(species = 'default') {
-            const radius = Math.random() * 2 + 1.2;
-            return new Particle({
-                x:  Math.random() * this.width,
-                y:  Math.random() * this.height,
-                vx: (Math.random() - 0.5) * 0.56,
-                vy: (Math.random() - 0.5) * 0.56,
-                radius,
-                species,
-            });
-        }
-
-        static fromMixture(groups, { width = 800, height = 600, boundary } = {}) {
-            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
-            const total = groups.reduce((s, g) => s + g.count, 0);
-
-            // Jittered grid — prevents LJ blowup from overlapping random starts
-            const cols = Math.ceil(Math.sqrt(total * width / height));
-            const rows = Math.ceil(total / cols);
-            const cellW = width / cols;
-            const cellH = height / rows;
-            const positions = [];
-            for (let r = 0; r < rows; r++) {
-                for (let c = 0; c < cols; c++) {
-                    if (positions.length >= total) break;
-                    positions.push([
-                        (c + 0.5 + (Math.random() - 0.5) * 0.6) * cellW,
-                        (r + 0.5 + (Math.random() - 0.5) * 0.6) * cellH,
-                    ]);
-                }
-            }
-            // Shuffle so species are spatially mixed rather than block-separated
-            for (let i = positions.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [positions[i], positions[j]] = [positions[j], positions[i]];
-            }
-
-            let idx = 0;
-            for (const { species, count, radius, radiusMin, radiusMax } of groups) {
-                for (let i = 0; i < count; i++) {
-                    const r = radius
-                        ?? (radiusMin !== undefined
-                            ? radiusMin + Math.random() * ((radiusMax ?? radiusMin) - radiusMin)
-                            : Math.random() * 2 + 1.2);
-                    const [x, y] = positions[idx++] ?? [Math.random() * width, Math.random() * height];
-                    sim.particles.push(new Particle({
-                        x, y,
-                        vx: (Math.random() - 0.5) * 0.56,
-                        vy: (Math.random() - 0.5) * 0.56,
-                        radius: r,
-                        species,
-                    }));
-                }
-            }
-            return sim;
-        }
-
-        resize(width, height) {
-            this.width  = width;
-            this.height = height;
-        }
-
-        addForce(force) {
-            this.forces.push(force);
-            return this;
-        }
-
-        removeForce(force) {
-            this.forces = this.forces.filter(f => f !== force);
-            return this;
-        }
-
-        step(context = {}) {
-            for (const p of this.particles) p.resetForces();
-
-            for (const force of this.forces) {
-                force.apply(this.particles, this, context);
-            }
-
-            for (const p of this.particles) {
-                p.vx += p.fx / p.mass;
-                p.vy += p.fy / p.mass;
-
-                p.x += p.vx;
-                p.y += p.vy;
-
-                this.boundary.applyPosition(p, this);
-            }
-
-            if (this.boundary.filterParticles) {
-                this.particles = this.boundary.filterParticles(this.particles, this);
-            }
-        }
-    }
-
-    // Langevin thermostat: friction damping + Gaussian noise
+    // Langevin thermostat — exact Ornstein-Uhlenbeck integrator for the O step of BAOAB.
+    // Stationary distribution: <v²> = kBT/m per component (equipartition). ✓
+    // FDT is enforced automatically: c2 is derived from c1 and temperature, not independent.
+    //
+    // Parameters:
+    //   temperature  — kBT in simulation energy units
+    //   gamma        — friction coefficient (1/timestep); typical range 0.001–0.05
+    let _spare = null;
     function randG() {
+        if (_spare !== null) { const s = _spare; _spare = null; return s; }
         let u, v;
         do { u = Math.random(); } while (u === 0);
         do { v = Math.random(); } while (v === 0);
-        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+        const mag = Math.sqrt(-2 * Math.log(u));
+        _spare = mag * Math.sin(2 * Math.PI * v);
+        return       mag * Math.cos(2 * Math.PI * v);
     }
 
     class ThermalForce {
-        constructor({ friction = 0.004, strength = 0.022 } = {}) {
-            this.friction = friction;
-            this.strength = strength;
+        constructor({ temperature = 0.03, gamma = 0.006 } = {}) {
+            this.temperature = temperature; // kBT
+            this.gamma       = gamma;       // friction coefficient (1/timestep)
+            this.isLangevin  = true;        // signals BAOAB integrator to place this in the O slot
         }
 
-        apply(particles) {
-            for (const p of particles) {
-                const invSqrtM = 1 / Math.sqrt(p.mass);
-                p.vx = p.vx * (1 - this.friction) + randG() * this.strength * invSqrtM;
-                p.vy = p.vy * (1 - this.friction) + randG() * this.strength * invSqrtM;
+        apply(store) {
+            const { vx, vy, mass, count } = store;
+            const c1   = Math.exp(-this.gamma);
+            const c2sq = (1 - c1 * c1) * this.temperature;
+            for (let i = 0; i < count; i++) {
+                const c2 = Math.sqrt(c2sq / mass[i]);
+                vx[i] = c1 * vx[i] + c2 * randG();
+                vy[i] = c1 * vy[i] + c2 * randG();
+            }
+        }
+    }
+
+    // Uniform cell list for O(n) spatial neighbour queries.
+    // build() assigns particle indices to grid cells; forEachPair() visits each
+    // unique pair exactly once using the half-space neighbour stencil.
+    class CellGrid {
+        constructor() {
+            this._cells = null;
+            this._nx    = 0;
+            this._ny    = 0;
+            this._cellW = 0;
+            this._cellH = 0;
+        }
+
+        // store: ParticleStore
+        build(store, cutoff, width, height) {
+            const nx = Math.max(1, Math.floor(width  / cutoff));
+            const ny = Math.max(1, Math.floor(height / cutoff));
+            this._nx    = nx;
+            this._ny    = ny;
+            this._cellW = width  / nx;
+            this._cellH = height / ny;
+
+            const total = nx * ny;
+            if (!this._cells || this._cells.length !== total) {
+                this._cells = new Array(total);
+                for (let i = 0; i < total; i++) this._cells[i] = [];
+            } else {
+                for (let i = 0; i < total; i++) this._cells[i].length = 0;
+            }
+
+            const { x, y, count } = store;
+            for (let k = 0; k < count; k++) {
+                const ci = Math.max(0, Math.min(nx - 1, (x[k] / this._cellW) | 0));
+                const cj = Math.max(0, Math.min(ny - 1, (y[k] / this._cellH) | 0));
+                this._cells[cj * nx + ci].push(k);
+            }
+        }
+
+        // Calls cb(i, j) for each unique unordered pair of particle indices whose
+        // cells are within one cell of each other.  Requires nx >= 3 && ny >= 3
+        // when periodic to guarantee no pair is visited twice.
+        forEachPair(count, cb, periodic = false) {
+            const { _nx: nx, _ny: ny, _cells: cells } = this;
+
+            // Tiny periodic box: half-space stencil would double-count pairs — fall back.
+            if (periodic && (nx < 3 || ny < 3)) {
+                for (let a = 0; a < count; a++)
+                    for (let b = a + 1; b < count; b++) cb(a, b);
+                return;
+            }
+
+            // Half-space stencil: each unordered cell pair visited exactly once.
+            for (let cy = 0; cy < ny; cy++) {
+                for (let cx = 0; cx < nx; cx++) {
+                    const cellA = cells[cy * nx + cx];
+                    if (!cellA.length) continue;
+
+                    // (0,0) — same cell, upper triangle only
+                    for (let a = 0; a < cellA.length; a++)
+                        for (let b = a + 1; b < cellA.length; b++)
+                            cb(cellA[a], cellA[b]);
+
+                    // Cross-cell neighbours
+                    const neighbours = [
+                        [cx + 1, cy    ],
+                        [cx - 1, cy + 1],
+                        [cx,     cy + 1],
+                        [cx + 1, cy + 1],
+                    ];
+
+                    for (let d = 0; d < 4; d++) {
+                        let ncx = neighbours[d][0];
+                        let ncy = neighbours[d][1];
+
+                        if (periodic) {
+                            ncx = ((ncx % nx) + nx) % nx;
+                            ncy = ((ncy % ny) + ny) % ny;
+                        } else if (ncx < 0 || ncx >= nx || ncy < 0 || ncy >= ny) {
+                            continue;
+                        }
+
+                        const cellB = cells[ncy * nx + ncx];
+                        if (!cellB.length) continue;
+
+                        for (let a = 0; a < cellA.length; a++)
+                            for (let b = 0; b < cellB.length; b++)
+                                cb(cellA[a], cellB[b]);
+                    }
+                }
             }
         }
     }
 
     // Pairwise soft repulsion between all particles
     class RepulsionForce {
-        constructor({ dist = 45, strength = 0.06 } = {}) {
-            this.dist     = dist;
-            this.strength = strength;
+        constructor({ dist = 45, strength = 0.06, minDistFrac = 0.05 } = {}) {
+            this.dist        = dist;
+            this.strength    = strength;
+            this.minDistFrac = minDistFrac;
+            this._grid       = new CellGrid();
         }
 
-        apply(particles, sim) {
-            const dist2 = this.dist * this.dist;
-            const bc    = sim?.boundary;
+        apply(store, sim) {
+            const { x, y, fx, fy, count } = store;
+            const dist     = this.dist;
+            const dist2    = dist * dist;
+            const strength = this.strength;
+            const minD2    = (dist * this.minDistFrac) ** 2;
+            const bc       = sim?.boundary;
+            const periodic = bc?.isPeriodic ?? false;
 
-            for (let i = 0; i < particles.length; i++) {
-                for (let j = i + 1; j < particles.length; j++) {
-                    let dx = particles[i].x - particles[j].x;
-                    let dy = particles[i].y - particles[j].y;
-                    if (bc) [dx, dy] = bc.minImage(dx, dy, sim);
-                    const d2 = dx * dx + dy * dy;
-                    if (d2 === 0 || d2 >= dist2) continue;
+            this._grid.build(store, dist, sim.width, sim.height);
 
-                    const d  = Math.sqrt(d2);
-                    const f  = (1 - d / this.dist) * this.strength / d;
-                    particles[i].fx += f * dx;
-                    particles[i].fy += f * dy;
-                    particles[j].fx -= f * dx;
-                    particles[j].fy -= f * dy;
+            this._grid.forEachPair(count, (i, j) => {
+                let dx = x[i] - x[j];
+                let dy = y[i] - y[j];
+                if (periodic) {
+                    const mi = bc.minImage(dx, dy, sim);
+                    dx = mi[0]; dy = mi[1];
                 }
-            }
+                const d2 = dx * dx + dy * dy;
+                if (d2 === 0 || d2 >= dist2) return;
+
+                const d2eff = d2 < minD2 ? minD2 : d2;
+                const d     = Math.sqrt(d2eff);
+                const f     = (1 - d / dist) * strength / d;
+                fx[i] += f * dx;  fy[i] += f * dy;
+                fx[j] -= f * dx;  fy[j] -= f * dy;
+            }, periodic);
         }
     }
 
@@ -203,31 +525,27 @@
             this.y        = null;
         }
 
-        setPosition(x, y) {
-            this.x = x;
-            this.y = y;
-        }
+        setPosition(x, y) { this.x = x; this.y = y; }
+        clear()            { this.x = null; this.y = null; }
 
-        clear() {
-            this.x = null;
-            this.y = null;
-        }
-
-        apply(particles) {
+        apply(store) {
             if (this.x === null) return;
+            const { x, y, fx, fy, count } = store;
             const mx    = this.x, my = this.y;
-            const dist2 = this.dist * this.dist;
+            const dist  = this.dist;
+            const dist2 = dist * dist;
+            const str   = this.strength;
 
-            for (const p of particles) {
-                const dx = p.x - mx;
-                const dy = p.y - my;
+            for (let i = 0; i < count; i++) {
+                const dx = x[i] - mx;
+                const dy = y[i] - my;
                 const d2 = dx * dx + dy * dy;
                 if (d2 === 0 || d2 >= dist2) continue;
 
                 const d = Math.sqrt(d2);
-                const f = (1 - d / this.dist) * this.strength / d;
-                p.fx += f * dx;
-                p.fy += f * dy;
+                const f = (1 - d / dist) * str / d;
+                fx[i] += f * dx;
+                fy[i] += f * dy;
             }
         }
     }
@@ -246,28 +564,26 @@
         setPosition(x, y) { this.x = x; this.y = y; }
         clear()            { this.x = null; this.y = null; }
 
-        apply(particles) {
+        apply(store) {
             if (this.x === null) return;
+            const { x, y, fx, fy, count } = store;
             const { epsilon, sigma } = this;
             const cutoff  = sigma * this.cutoffMult;
             const cutoff2 = cutoff * cutoff;
             const mx = this.x, my = this.y;
+            const minD2 = (sigma * 0.9) ** 2;
 
-            const minD  = sigma * 0.9;
-            const minD2 = minD * minD;
-
-            for (const p of particles) {
-                const dx = p.x - mx;
-                const dy = p.y - my;
+            for (let i = 0; i < count; i++) {
+                const dx = x[i] - mx;
+                const dy = y[i] - my;
                 const d2 = dx * dx + dy * dy;
                 if (d2 === 0 || d2 >= cutoff2) continue;
 
-                // Clamp to minD so the r^-12 term can't blow up when cursor teleports
                 const d2eff = Math.max(d2, minD2);
                 const sr6   = (sigma * sigma / d2eff) ** 3;
                 const f     = 24 * epsilon / d2eff * (2 * sr6 * sr6 - sr6);
-                p.fx += f * dx;
-                p.fy += f * dy;
+                fx[i] += f * dx;
+                fy[i] += f * dy;
             }
         }
     }
@@ -279,10 +595,12 @@
             this.gy = gy;
         }
 
-        apply(particles) {
-            for (const p of particles) {
-                p.fx += this.gx * p.mass;
-                p.fy += this.gy * p.mass;
+        apply(store) {
+            const { fx, fy, mass, count } = store;
+            const { gx, gy } = this;
+            for (let i = 0; i < count; i++) {
+                fx[i] += gx * mass[i];
+                fy[i] += gy * mass[i];
             }
         }
     }
@@ -308,82 +626,111 @@
         };
     }
 
-    // Lennard-Jones 12-6 pair potential: attractive well + repulsive core
+    // Lennard-Jones 12-6 pair potential with shifted potential (V(rc) = 0).
     // f = 24ε/r² [2(σ/r)¹² − (σ/r)⁶], folding 1/r into the unit vector
     class LJForce {
-        constructor({ species = {}, cutoffMult = 2.5, overrides = {} } = {}) {
+        constructor({ species = {}, cutoffMult = 2.5, minDistMult = 0.5, overrides = {} } = {}) {
             const names = Object.keys(species);
             const n     = names.length;
 
-            // species string → integer index
             this._si = Object.fromEntries(names.map((s, i) => [s, i]));
             this._n  = n;
 
-            // flat n×n array of pre-computed pair params
             this._fp = new Array(n * n).fill(null);
+            let maxRc = 0;
             for (let i = 0; i < n; i++) {
                 for (let j = i; j < n; j++) {
                     const key = pairKey(names[i], names[j]);
                     const raw = key in overrides ? overrides[key] : ljMix(species[names[i]], species[names[j]]);
                     const rc  = cutoffMult * raw.sigma;
+                    if (rc > maxRc) maxRc = rc;
+                    const minD = minDistMult * raw.sigma;
+                    // Shifted potential: subtract V(rc) so energy → 0 continuously at cutoff.
+                    const src  = raw.sigma / rc;
+                    const src6 = (src * src * src) * (src * src * src);
                     const entry = {
-                        sigma2: raw.sigma * raw.sigma,
-                        f24:    24 * raw.epsilon,
-                        rc2:    rc * rc,
+                        sigma2:  raw.sigma * raw.sigma,
+                        f24:     24 * raw.epsilon,
+                        rc2:     rc * rc,
+                        minD2:   minD * minD,
+                        V_shift: 4 * raw.epsilon * (src6 * src6 - src6),
                     };
                     this._fp[i * n + j] = entry;
                     this._fp[j * n + i] = entry;
                 }
             }
 
-            this._typeOf = null; // Int32Array cache, reused across frames
+            this._maxRc  = maxRc;
+            this._typeOf = null;
+            this._grid   = new CellGrid();
         }
 
-        apply(particles, sim) {
-            const { _si: si, _fp: fp, _n: n } = this;
-            const len = particles.length;
-            const bc  = sim?.boundary;
+        potentialEnergy(store, sim) {
+            const { _si: si, _fp: fp, _n: n, _maxRc: maxRc } = this;
+            const { x, y, species, count } = store;
+            const bc       = sim?.boundary;
+            const periodic = bc?.isPeriodic ?? false;
+            let   pe       = 0;
+            this._grid.build(store, maxRc, sim.width, sim.height);
+            this._grid.forEachPair(count, (i, j) => {
+                const ti = si[species[i]] ?? -1; if (ti < 0) return;
+                const tj = si[species[j]] ?? -1; if (tj < 0) return;
+                const p  = fp[ti * n + tj]; if (!p) return;
+                let dx = x[i] - x[j];
+                let dy = y[i] - y[j];
+                if (periodic) { const mi = bc.minImage(dx, dy, sim); dx = mi[0]; dy = mi[1]; }
+                const d2 = dx * dx + dy * dy;
+                if (d2 === 0 || d2 >= p.rc2) return;
+                const d2eff = d2 < p.minD2 ? p.minD2 : d2;
+                const sr    = p.sigma2 / d2eff;
+                const sr3   = sr * sr * sr;
+                const sr6   = sr3 * sr3;
+                pe += (p.f24 / 24) * (sr6 - sr3) * 2 - p.V_shift;
+            }, periodic);
+            return pe;
+        }
 
-            // Build/reuse per-particle type index array (O(n) map lookups once per frame)
-            if (!this._typeOf || this._typeOf.length < len) this._typeOf = new Int32Array(len);
+        apply(store, sim) {
+            const { _si: si, _fp: fp, _n: n, _maxRc: maxRc } = this;
+            const { x, y, fx, fy, species, count } = store;
+            const bc       = sim?.boundary;
+            const periodic = bc?.isPeriodic ?? false;
+
+            if (!this._typeOf || this._typeOf.length < count) this._typeOf = new Int32Array(count);
             const typeOf = this._typeOf;
-            for (let k = 0; k < len; k++) typeOf[k] = si[particles[k].species] ?? -1;
+            for (let k = 0; k < count; k++) typeOf[k] = si[species[k]] ?? -1;
 
-            for (let i = 0; i < len; i++) {
-                const ti = typeOf[i];
-                if (ti < 0) continue;
-                const pi = particles[i];
+            this._grid.build(store, maxRc, sim.width, sim.height);
 
-                for (let j = i + 1; j < len; j++) {
-                    const tj = typeOf[j];
-                    if (tj < 0) continue;
-                    const p = fp[ti * n + tj];
-                    if (!p) continue;
+            this._grid.forEachPair(count, (i, j) => {
+                const ti = typeOf[i]; if (ti < 0) return;
+                const tj = typeOf[j]; if (tj < 0) return;
+                const p  = fp[ti * n + tj]; if (!p) return;
 
-                    const pj = particles[j];
-                    let dx = pi.x - pj.x;
-                    let dy = pi.y - pj.y;
-                    if (bc) [dx, dy] = bc.minImage(dx, dy, sim);
-                    const d2 = dx * dx + dy * dy;
-                    if (d2 === 0 || d2 >= p.rc2) continue;
-
-                    const sr  = p.sigma2 / d2; // (σ/r)²
-                    const sr3 = sr * sr * sr;   // (σ/r)⁶
-                    const sr6 = sr3 * sr3;      // (σ/r)¹²
-                    const f   = p.f24 / d2 * (2 * sr6 - sr3);
-                    pi.fx += f * dx;
-                    pi.fy += f * dy;
-                    pj.fx -= f * dx;
-                    pj.fy -= f * dy;
+                let dx = x[i] - x[j];
+                let dy = y[i] - y[j];
+                if (periodic) {
+                    const mi = bc.minImage(dx, dy, sim);
+                    dx = mi[0]; dy = mi[1];
                 }
-            }
+                const d2 = dx * dx + dy * dy;
+                if (d2 === 0 || d2 >= p.rc2) return;
+
+                const d2eff = d2 < p.minD2 ? p.minD2 : d2;
+                const sr    = p.sigma2 / d2eff;
+                const sr3   = sr * sr * sr;
+                const sr6   = sr3 * sr3;
+                const f     = p.f24 / d2eff * (2 * sr6 - sr3);
+                fx[i] += f * dx;  fy[i] += f * dy;
+                fx[j] -= f * dx;  fy[j] -= f * dy;
+            }, periodic);
         }
     }
 
     // Morse pair potential: softer repulsion than LJ, asymmetric well
     // V(r) = De[(1 - e^{-a(r-re)})² - 1],  F = -dV/dr projected along pair vector
     class MorseForce {
-        constructor({ species = {}, cutoffMult = 4.0, overrides = {} } = {}) {
+        constructor({ species = {}, cutoffMult = 4.0, minDistMult = 0.3, overrides = {} } = {}) {
             const names = Object.keys(species);
             const n     = names.length;
 
@@ -391,63 +738,292 @@
             this._n  = n;
 
             this._fp = new Array(n * n).fill(null);
+            let maxRc = 0;
             for (let i = 0; i < n; i++) {
                 for (let j = i; j < n; j++) {
                     const key = pairKey(names[i], names[j]);
                     const raw = key in overrides ? overrides[key] : morseMix(species[names[i]], species[names[j]]);
                     const rc  = raw.re * cutoffMult;
+                    if (rc > maxRc) maxRc = rc;
+                    const minD  = minDistMult * raw.re;
                     const entry = {
-                        De:  raw.De,
-                        re:  raw.re,
-                        a:   raw.a,
-                        rc2: rc * rc,
-                        a2De: 2 * raw.a * raw.De,
+                        De:    raw.De,
+                        re:    raw.re,
+                        a:     raw.a,
+                        rc2:   rc * rc,
+                        minD2: minD * minD,
+                        a2De:  2 * raw.a * raw.De,
                     };
                     this._fp[i * n + j] = entry;
                     this._fp[j * n + i] = entry;
                 }
             }
 
+            this._maxRc  = maxRc;
             this._typeOf = null;
+            this._grid   = new CellGrid();
         }
 
-        apply(particles) {
-            const { _si: si, _fp: fp, _n: n } = this;
-            const len = particles.length;
+        apply(store, sim) {
+            const { _si: si, _fp: fp, _n: n, _maxRc: maxRc } = this;
+            const { x, y, fx, fy, species, count } = store;
+            const bc       = sim?.boundary;
+            const periodic = bc?.isPeriodic ?? false;
 
-            if (!this._typeOf || this._typeOf.length < len) this._typeOf = new Int32Array(len);
+            if (!this._typeOf || this._typeOf.length < count) this._typeOf = new Int32Array(count);
             const typeOf = this._typeOf;
-            for (let k = 0; k < len; k++) typeOf[k] = si[particles[k].species] ?? -1;
+            for (let k = 0; k < count; k++) typeOf[k] = si[species[k]] ?? -1;
 
-            for (let i = 0; i < len; i++) {
-                const ti = typeOf[i];
-                if (ti < 0) continue;
-                const pi = particles[i];
+            this._grid.build(store, maxRc, sim.width, sim.height);
 
-                for (let j = i + 1; j < len; j++) {
-                    const tj = typeOf[j];
-                    if (tj < 0) continue;
-                    const p = fp[ti * n + tj];
-                    if (!p) continue;
+            this._grid.forEachPair(count, (i, j) => {
+                const ti = typeOf[i]; if (ti < 0) return;
+                const tj = typeOf[j]; if (tj < 0) return;
+                const p  = fp[ti * n + tj]; if (!p) return;
 
-                    const pj = particles[j];
-                    const dx = pi.x - pj.x;
-                    const dy = pi.y - pj.y;
-                    const d2 = dx * dx + dy * dy;
-                    if (d2 === 0 || d2 >= p.rc2) continue;
+                let dx = x[i] - x[j];
+                let dy = y[i] - y[j];
+                if (periodic) {
+                    const mi = bc.minImage(dx, dy, sim);
+                    dx = mi[0]; dy = mi[1];
+                }
+                const d2 = dx * dx + dy * dy;
+                if (d2 === 0 || d2 >= p.rc2) return;
 
-                    const d     = Math.sqrt(d2);
-                    const eterm = Math.exp(-p.a * (d - p.re));
-                    // f > 0 when r < re (repulsive), f < 0 when r > re (attractive)
-                    const f = -p.a2De * (1 - eterm) * eterm / d;
-                    pi.fx += f * dx;
-                    pi.fy += f * dy;
-                    pj.fx -= f * dx;
-                    pj.fy -= f * dy;
+                const d     = Math.sqrt(d2 < p.minD2 ? p.minD2 : d2);
+                const eterm = Math.exp(-p.a * (d - p.re));
+                const f     = -p.a2De * (1 - eterm) * eterm / d;
+                fx[i] += f * dx;  fy[i] += f * dy;
+                fx[j] -= f * dx;  fy[j] -= f * dy;
+            }, periodic);
+        }
+    }
+
+    // Harmonic spring between explicitly bonded particle index pairs.
+    // bonds: [[i, j, restLength?], ...]  — restLength defaults to current distance at construction
+    // Includes optional velocity damping along the bond axis to prevent oscillation.
+    class SpringForce {
+        constructor({ bonds = [], stiffness = 0.1, damping = 0.02 } = {}) {
+            this.stiffness = stiffness;
+            this.damping   = damping;
+            // Normalise bond entries to [i, j, rest]
+            this.bonds = bonds.map(b => [b[0], b[1], b[2] ?? null]);
+        }
+
+        // Convenience: set rest length from current particle positions.
+        // Call after particles are placed if rest lengths were omitted.
+        calibrate(store) {
+            for (const b of this.bonds) {
+                if (b[2] !== null) continue;
+                if (b[0] >= store.count || b[1] >= store.count) continue;
+                const dx = store.x[b[0]] - store.x[b[1]];
+                const dy = store.y[b[0]] - store.y[b[1]];
+                b[2] = Math.sqrt(dx * dx + dy * dy);
+            }
+        }
+
+        apply(store) {
+            const { x, y, vx, vy, fx, fy, count } = store;
+            const { stiffness, damping } = this;
+
+            for (const [i, j, rest] of this.bonds) {
+                if (i >= count || j >= count) continue;
+
+                const dx = x[i] - x[j];
+                const dy = y[i] - y[j];
+                const d2 = dx * dx + dy * dy;
+                if (d2 === 0) continue;
+                const d = Math.sqrt(d2);
+
+                const r       = rest ?? d;
+                const stretch = d - r;
+                const fs      = stiffness * stretch / d;
+
+                // Velocity damping along bond axis
+                const dvx = vx[i] - vx[j];
+                const dvy = vy[i] - vy[j];
+                const fd  = damping * (dvx * dx + dvy * dy) / d2;
+
+                const f = fs + fd;
+                fx[i] -= f * dx;  fy[i] -= f * dy;
+                fx[j] += f * dx;  fy[j] += f * dy;
+            }
+        }
+    }
+
+    // Point gravity well at a fixed (x, y).  All particles are pulled toward it with
+    // force proportional to mass (so all species accelerate equally, like gravity).
+    // falloff controls the power-law exponent: 1 = linear, 2 = inverse-square.
+    class AttractorForce {
+        constructor({ x = 0, y = 0, strength = 0.05, falloff = 1, minDist = 10 } = {}) {
+            this.x        = x;
+            this.y        = y;
+            this.strength = strength;
+            this.falloff  = falloff;
+            this.minDist  = minDist;
+        }
+
+        apply(store) {
+            const { x, y, fx, fy, mass, count } = store;
+            const { x: ax, y: ay, strength, falloff, minDist } = this;
+            const minD2 = minDist * minDist;
+
+            for (let i = 0; i < count; i++) {
+                const dx = ax - x[i];
+                const dy = ay - y[i];
+                const d2 = Math.max(minD2, dx * dx + dy * dy);
+                const d  = Math.sqrt(d2);
+                const f  = strength * mass[i] * Math.pow(d, -(falloff + 1));
+                fx[i] += f * dx;
+                fy[i] += f * dy;
+            }
+        }
+    }
+
+    // Tangential (curl) force around a fixed centre — produces swirling without attraction.
+    // Positive strength = counterclockwise; negative = clockwise.
+    class VortexForce {
+        constructor({ x = 0, y = 0, strength = 0.05, falloff = 1, minDist = 10 } = {}) {
+            this.x        = x;
+            this.y        = y;
+            this.strength = strength;
+            this.falloff  = falloff;
+            this.minDist  = minDist;
+        }
+
+        apply(store) {
+            const { x, y, fx, fy, count } = store;
+            const { x: vx, y: vy, strength, falloff, minDist } = this;
+            const minD2 = minDist * minDist;
+
+            for (let i = 0; i < count; i++) {
+                const dx = x[i] - vx;
+                const dy = y[i] - vy;
+                const d2 = Math.max(minD2, dx * dx + dy * dy);
+                const d  = Math.sqrt(d2);
+                // Tangential unit vector perpendicular to radial: (-dy, dx) / d
+                const f  = strength * Math.pow(d, -(falloff + 1));
+                fx[i] += f * (-dy);
+                fy[i] += f * ( dx);
+            }
+        }
+    }
+
+    // Soft repulsion from the canvas edges — a gentler alternative to ReflectiveBoundary.
+    // Particles feel no force when further than `margin` from a wall; force grows as a
+    // power law as they enter the margin zone, reaching `strength` at the wall itself.
+    class BoundaryForce {
+        constructor({ margin = 60, strength = 0.4, power = 2 } = {}) {
+            this.margin   = margin;
+            this.strength = strength;
+            this.power    = power;
+        }
+
+        apply(store, sim) {
+            const { x, y, fx, fy, count } = store;
+            const { margin, strength, power } = this;
+            const { width, height } = sim;
+            const invMargin = 1 / margin;
+
+            for (let i = 0; i < count; i++) {
+                if (x[i] < margin) {
+                    fx[i] += strength * Math.pow((margin - x[i]) * invMargin, power);
+                } else if (x[i] > width - margin) {
+                    fx[i] -= strength * Math.pow((x[i] - (width - margin)) * invMargin, power);
+                }
+                if (y[i] < margin) {
+                    fy[i] += strength * Math.pow((margin - y[i]) * invMargin, power);
+                } else if (y[i] > height - margin) {
+                    fy[i] -= strength * Math.pow((y[i] - (height - margin)) * invMargin, power);
                 }
             }
         }
     }
+
+    // Boid-style flocking: separation (avoid crowding), alignment (match heading),
+    // cohesion (steer toward group centre).  Uses CellGrid for O(n) pair detection.
+    class FlockForce {
+        constructor({
+            perceptionRadius = 80,
+            separationRadius = 25,
+            separationWeight = 0.25,
+            alignmentWeight  = 0.08,
+            cohesionWeight   = 0.04,
+        } = {}) {
+            this.perceptionRadius = perceptionRadius;
+            this.separationRadius = separationRadius;
+            this.separationWeight = separationWeight;
+            this.alignmentWeight  = alignmentWeight;
+            this.cohesionWeight   = cohesionWeight;
+            this._grid = new CellGrid();
+        }
+
+        apply(store, sim) {
+            const { x, y, vx, vy, fx, fy, count } = store;
+            if (count < 2) return;
+
+            const { perceptionRadius: pr, separationRadius: sr,
+                    separationWeight: sw, alignmentWeight: aw, cohesionWeight: cw } = this;
+            const pr2 = pr * pr;
+            const sr2 = sr * sr;
+            const bc       = sim?.boundary;
+            const periodic = bc?.isPeriodic ?? false;
+
+            this._grid.build(store, pr, sim.width, sim.height);
+
+            if (!this._buf || this._buf.length < count * 7) this._buf = new Float32Array(count * 7);
+            const buf = this._buf;
+            buf.fill(0, 0, count * 7);
+            // Layout per particle i: [sepX, sepY, aliX, aliY, cohX, cohY, count]
+            //                         i*7+0  +1    +2    +3    +4    +5    +6
+
+            this._grid.forEachPair(count, (i, j) => {
+                let dx = x[i] - x[j];
+                let dy = y[i] - y[j];
+                if (periodic) {
+                    const mi = bc.minImage(dx, dy, sim);
+                    dx = mi[0]; dy = mi[1];
+                }
+                const d2 = dx * dx + dy * dy;
+                if (d2 === 0 || d2 >= pr2) return;
+
+                const bi = i * 7, bj = j * 7;
+
+                buf[bi + 4] -= dx;  buf[bi + 5] -= dy;
+                buf[bj + 4] += dx;  buf[bj + 5] += dy;
+
+                buf[bi + 2] += vx[j];  buf[bi + 3] += vy[j];
+                buf[bj + 2] += vx[i];  buf[bj + 3] += vy[i];
+
+                buf[bi + 6]++;  buf[bj + 6]++;
+
+                if (d2 < sr2) {
+                    const d = Math.sqrt(d2);
+                    const s = (sr - d) / (d * sr);
+                    buf[bi    ] += s * dx;  buf[bi + 1] += s * dy;
+                    buf[bj    ] -= s * dx;  buf[bj + 1] -= s * dy;
+                }
+            }, periodic);
+
+            for (let i = 0; i < count; i++) {
+                const bi = i * 7;
+                const nb = buf[bi + 6];
+
+                fx[i] += sw * buf[bi    ];
+                fy[i] += sw * buf[bi + 1];
+
+                if (nb > 0) {
+                    const invNb = 1 / nb;
+                    fx[i] += cw * buf[bi + 4] * invNb;
+                    fy[i] += cw * buf[bi + 5] * invNb;
+                    fx[i] += aw * (buf[bi + 2] * invNb - vx[i]);
+                    fy[i] += aw * (buf[bi + 3] * invNb - vy[i]);
+                }
+            }
+        }
+    }
+
+    const LINK_BUCKETS = 5;
 
     class CanvasRenderer {
         constructor(canvas, {
@@ -469,20 +1045,30 @@
             this.mouseColor    = mouseColor;
             this.linkDist      = linkDist;
             this.mouseLinkDist = mouseLinkDist;
+            this.linksEnabled      = true;
+            this.mouseLinksEnabled = true;
             this.colorMap      = colorMap;
-            this.drawParticle  = drawParticle;
-            this.drawLink      = drawLink;
-            this.drawMouseLink = drawMouseLink;
-            this.drawMouseNode = drawMouseNode;
+
+            this._drawLink        = drawLink      ?? null;
+            this._drawMouseLink   = drawMouseLink ?? this._defaultDrawMouseLink.bind(this);
+            this._drawMouseNode   = drawMouseNode ?? this._defaultDrawMouseNode.bind(this);
+            this._drawParticle    = drawParticle  ?? null; // null = use _defaultDrawParticle directly
+
+            this._grid    = new CellGrid();
+            this._buckets = Array.from({ length: LINK_BUCKETS }, () => []);
+
+            // Reusable view objects for user-facing callbacks — avoids allocations per frame.
+            this._viewA = { x: 0, y: 0, radius: 0, species: '', vx: 0, vy: 0 };
+            this._viewB = { x: 0, y: 0, radius: 0, species: '', vx: 0, vy: 0 };
         }
 
-        _defaultDrawLink(ctx, pi, pj, alpha) {
-            ctx.beginPath();
-            ctx.strokeStyle = this.lineColor + alpha + ')';
-            ctx.lineWidth   = 0.8;
-            ctx.moveTo(pi.x, pi.y);
-            ctx.lineTo(pj.x, pj.y);
-            ctx.stroke();
+        _fillView(v, store, i) {
+            v.x       = store.x[i];
+            v.y       = store.y[i];
+            v.radius  = store.radius[i];
+            v.species = store.species[i];
+            v.vx      = store.vx[i];
+            v.vy      = store.vy[i];
         }
 
         _defaultDrawMouseLink(ctx, p, mouse, alpha) {
@@ -501,92 +1087,184 @@
             ctx.fill();
         }
 
-        _defaultDrawParticle(ctx, p) {
+        _defaultDrawParticle(ctx, store, i) {
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-            ctx.fillStyle = (this.colorMap[p.species] ?? this.dotColor) + '0.7)';
+            ctx.arc(store.x[i], store.y[i], store.radius[i], 0, Math.PI * 2);
+            ctx.fillStyle = (this.colorMap[store.species[i]] ?? this.dotColor) + '0.7)';
             ctx.fill();
         }
 
-        render(particles, mouse = { x: null, y: null }) {
+        // store: ParticleStore.  sim is optional; when provided and boundary is periodic,
+        // links crossing the boundary are drawn as two clipped half-segments.
+        render(store, mouse = { x: null, y: null }, sim = null) {
             const { ctx, canvas } = this;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            const drawLink      = this.drawLink      ?? ((c, pi, pj, a) => this._defaultDrawLink(c, pi, pj, a));
-            const drawMouseLink = this.drawMouseLink ?? ((c, p, m, a)   => this._defaultDrawMouseLink(c, p, m, a));
-            const drawMouseNode = this.drawMouseNode ?? ((c, m)          => this._defaultDrawMouseNode(c, m));
-            const drawParticle  = this.drawParticle  ?? ((c, p)          => this._defaultDrawParticle(c, p));
+            const n = store.count;
+            if (n > 1 && this.linksEnabled) {
+                const { x, y } = store;
+                const linkDist  = this.linkDist;
+                const linkDist2 = linkDist * linkDist;
+                const bc        = sim?.boundary ?? null;
+                const periodic  = bc?.isPeriodic ?? false;
 
-            // Inter-particle links
-            const linkDist2 = this.linkDist * this.linkDist;
-            for (let i = 0; i < particles.length; i++) {
-                for (let j = i + 1; j < particles.length; j++) {
-                    const dx = particles[i].x - particles[j].x;
-                    const dy = particles[i].y - particles[j].y;
-                    const d2 = dx * dx + dy * dy;
-                    if (d2 >= linkDist2) continue;
+                this._grid.build(store, linkDist, canvas.width, canvas.height);
 
-                    const alpha = (1 - Math.sqrt(d2) / this.linkDist) * 0.5;
-                    drawLink(ctx, particles[i], particles[j], alpha);
+                if (!this._drawLink) {
+                    const buckets = this._buckets;
+                    for (let b = 0; b < LINK_BUCKETS; b++) buckets[b].length = 0;
+
+                    this._grid.forEachPair(n, (i, j) => {
+                        const dxr = x[i] - x[j];
+                        const dyr = y[i] - y[j];
+                        let   dx  = dxr, dy = dyr;
+                        if (periodic) {
+                            const mi = bc.minImage(dxr, dyr, sim);
+                            dx = mi[0]; dy = mi[1];
+                        }
+                        const d2 = dx * dx + dy * dy;
+                        if (d2 >= linkDist2) return;
+
+                        const alpha = (1 - Math.sqrt(d2) / linkDist) * 0.5;
+                        const b     = Math.min(LINK_BUCKETS - 1, (alpha * LINK_BUCKETS / 0.5) | 0);
+                        const bkt   = buckets[b];
+
+                        bkt.push(x[i], y[i], x[i] - dx, y[i] - dy);
+
+                        if (periodic && (Math.abs(dx - dxr) > 0.5 || Math.abs(dy - dyr) > 0.5)) {
+                            bkt.push(x[j] + dx, y[j] + dy, x[j], y[j]);
+                        }
+                    }, periodic);
+
+                    ctx.lineWidth = 0.8;
+                    for (let b = 0; b < LINK_BUCKETS; b++) {
+                        const bkt = buckets[b];
+                        if (!bkt.length) continue;
+                        ctx.beginPath();
+                        ctx.strokeStyle = this.lineColor + ((b + 1) / LINK_BUCKETS * 0.5) + ')';
+                        for (let k = 0; k < bkt.length; k += 4) {
+                            ctx.moveTo(bkt[k],     bkt[k + 1]);
+                            ctx.lineTo(bkt[k + 2], bkt[k + 3]);
+                        }
+                        ctx.stroke();
+                    }
+                } else {
+                    const drawLink = this._drawLink;
+                    const va = this._viewA, vb = this._viewB;
+                    this._grid.forEachPair(n, (i, j) => {
+                        const dxr = x[i] - x[j];
+                        const dyr = y[i] - y[j];
+                        let   dx  = dxr, dy = dyr;
+                        if (periodic) {
+                            const mi = bc.minImage(dxr, dyr, sim);
+                            dx = mi[0]; dy = mi[1];
+                        }
+                        const d2 = dx * dx + dy * dy;
+                        if (d2 >= linkDist2) return;
+
+                        const alpha = (1 - Math.sqrt(d2) / linkDist) * 0.5;
+                        this._fillView(va, store, i);
+                        this._fillView(vb, store, j);
+                        drawLink(ctx, va, vb, alpha);
+
+                        if (periodic && (Math.abs(dx - dxr) > 0.5 || Math.abs(dy - dyr) > 0.5)) {
+                            vb.x = x[j] + dx; vb.y = y[j] + dy;
+                            drawLink(ctx, va, vb, alpha);
+                        }
+                    }, periodic);
                 }
             }
 
             // Mouse links
-            if (mouse.x !== null) {
-                const mouseLinkDist2 = this.mouseLinkDist * this.mouseLinkDist;
-                for (const p of particles) {
-                    const dx = p.x - mouse.x;
-                    const dy = p.y - mouse.y;
+            if (this.mouseLinksEnabled && mouse.x !== null) {
+                const { x, y } = store;
+                const mouseLinkDist  = this.mouseLinkDist;
+                const mouseLinkDist2 = mouseLinkDist * mouseLinkDist;
+                const drawMouseLink  = this._drawMouseLink;
+                const va = this._viewA;
+                for (let k = 0; k < n; k++) {
+                    const dx = x[k] - mouse.x;
+                    const dy = y[k] - mouse.y;
                     const d2 = dx * dx + dy * dy;
                     if (d2 >= mouseLinkDist2) continue;
 
-                    const alpha = (1 - Math.sqrt(d2) / this.mouseLinkDist) * 0.7;
-                    drawMouseLink(ctx, p, mouse, alpha);
+                    const alpha = (1 - Math.sqrt(d2) / mouseLinkDist) * 0.7;
+                    this._fillView(va, store, k);
+                    drawMouseLink(ctx, va, mouse, alpha);
                 }
-                drawMouseNode(ctx, mouse);
+                this._drawMouseNode(ctx, mouse);
             }
 
-            // Particles
-            for (const p of particles) drawParticle(ctx, p);
+            // Particles — custom drawParticle receives a reused view object {x,y,radius,species,...}
+            const drawParticle = this._drawParticle;
+            if (!drawParticle) {
+                for (let k = 0; k < n; k++) this._defaultDrawParticle(ctx, store, k);
+            } else {
+                const va = this._viewA;
+                for (let k = 0; k < n; k++) {
+                    this._fillView(va, store, k);
+                    drawParticle(ctx, va);
+                }
+            }
         }
     }
 
     class ReflectiveBoundary {
-        applyPosition(p, sim) {
-            if (p.x < 0)              { p.x = -p.x;                  p.vx =  Math.abs(p.vx); }
-            else if (p.x > sim.width) { p.x = 2 * sim.width  - p.x;  p.vx = -Math.abs(p.vx); }
-            if (p.y < 0)              { p.y = -p.y;                   p.vy =  Math.abs(p.vy); }
-            else if (p.y > sim.height){ p.y = 2 * sim.height - p.y;  p.vy = -Math.abs(p.vy); }
+        isPeriodic = false;
+
+        applyPosition(store, i, sim) {
+            while (store.x[i] < 0)           { store.x[i] = -store.x[i];                  store.vx[i] =  Math.abs(store.vx[i]); }
+            while (store.x[i] > sim.width)   { store.x[i] = 2 * sim.width  - store.x[i]; store.vx[i] = -Math.abs(store.vx[i]); }
+            while (store.y[i] < 0)           { store.y[i] = -store.y[i];                  store.vy[i] =  Math.abs(store.vy[i]); }
+            while (store.y[i] > sim.height)  { store.y[i] = 2 * sim.height - store.y[i]; store.vy[i] = -Math.abs(store.vy[i]); }
         }
 
         minImage(dx, dy) { return [dx, dy]; }
     }
 
     class AbsorbingBoundary {
+        isPeriodic = false;
+
+        constructor({ onRemove = null } = {}) {
+            this.onRemove = onRemove;
+        }
+
         applyPosition() {}
 
         minImage(dx, dy) { return [dx, dy]; }
 
-        filterParticles(particles, sim) {
-            return particles.filter(p =>
-                p.x >= 0 && p.x <= sim.width &&
-                p.y >= 0 && p.y <= sim.height
-            );
+        // Modifies store in-place (O(1) swap-remove per absorbed particle).
+        // Iterates backwards so swap-removal never skips an unprocessed index.
+        filterParticles(store, sim) {
+            const { width, height } = sim;
+            for (let i = store.count - 1; i >= 0; i--) {
+                if (store.x[i] < 0 || store.x[i] > width || store.y[i] < 0 || store.y[i] > height) {
+                    if (this.onRemove) this.onRemove(store, i);
+                    store.remove(i);
+                }
+            }
         }
     }
 
     exports.AbsorbingBoundary = AbsorbingBoundary;
+    exports.AttractorForce = AttractorForce;
+    exports.BoundaryForce = BoundaryForce;
     exports.CanvasRenderer = CanvasRenderer;
+    exports.CellGrid = CellGrid;
+    exports.FlockForce = FlockForce;
     exports.GravityForce = GravityForce;
     exports.LJForce = LJForce;
     exports.MorseForce = MorseForce;
     exports.MouseForce = MouseForce;
     exports.MouseLJForce = MouseLJForce;
     exports.Particle = Particle;
+    exports.ParticleStore = ParticleStore;
     exports.PeriodicBoundary = PeriodicBoundary;
     exports.ReflectiveBoundary = ReflectiveBoundary;
     exports.RepulsionForce = RepulsionForce;
     exports.Simulation = Simulation;
+    exports.SpringForce = SpringForce;
     exports.ThermalForce = ThermalForce;
+    exports.VortexForce = VortexForce;
 
 }));

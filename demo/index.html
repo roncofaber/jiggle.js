@@ -5,140 +5,738 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>jiggle.js demo</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #0d1117; color: #e6edf3; font-family: monospace; }
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; color: #e6edf3; font-family: monospace; overflow: hidden; }
         canvas { display: block; width: 100vw; height: 100vh; }
 
-        #controls {
+        /* ── Panel ───────────────────────────────────────────────────── */
+        #panel {
             position: fixed;
             top: 1rem;
             right: 1rem;
-            background: rgba(22,27,34,0.92);
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 1rem;
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-            font-size: 0.8rem;
-            min-width: 220px;
+            width: 256px;
+            max-height: calc(100vh - 2rem);
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: rgba(13,17,23,0.88);
+            border: 1px solid rgba(48,54,61,0.9);
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+            backdrop-filter: blur(10px);
+            scrollbar-width: thin;
+            scrollbar-color: #30363d transparent;
         }
-        #controls h3 { color: #58a6ff; margin-bottom: 0.25rem; }
-        #controls h4 { color: #79c0ff; margin-top: 0.25rem; font-size: 0.75rem; }
-        label { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-        input[type=range] { width: 100px; }
-        span.val { color: #79c0ff; width: 42px; text-align: right; }
-        .sep { border: none; border-top: 1px solid #30363d; margin: 0.25rem 0; }
+        #panel::-webkit-scrollbar { width: 4px; }
+        #panel::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+        #panel-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.65rem 0.9rem 0.5rem;
+            font-size: 0.82rem;
+            font-weight: bold;
+            letter-spacing: 0.08em;
+            color: #58a6ff;
+            border-bottom: 1px solid rgba(48,54,61,0.6);
+            user-select: none;
+        }
+        #fps { font-size: 0.68rem; color: #6e7681; font-weight: normal; letter-spacing: 0; }
+
+        /* ── Accordion ───────────────────────────────────────────────── */
+        .section { border-bottom: 1px solid rgba(48,54,61,0.5); }
+        .section:last-child { border-bottom: none; }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 0.5rem 0.9rem;
+            background: none;
+            border: none;
+            color: #c9d1d9;
+            font-family: monospace;
+            font-size: 0.78rem;
+            font-weight: bold;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.15s, background 0.15s;
+        }
+        .section-header:hover { color: #e6edf3; background: rgba(255,255,255,0.03); }
+        .section.open .section-header { color: #e6edf3; }
+
+        .chevron {
+            font-size: 0.7rem;
+            color: #6e7681;
+            transition: transform 0.2s ease, color 0.15s;
+        }
+        .section.open .chevron { transform: rotate(90deg); color: #58a6ff; }
+
+        .section-body {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.22s ease;
+        }
+        .section.open .section-body { grid-template-rows: 1fr; }
+        .section-inner  { overflow: hidden; }
+        .section-content { padding: 0.4rem 0.9rem 0.7rem; display: flex; flex-direction: column; gap: 0.35rem; }
+
+        /* ── Rows ────────────────────────────────────────────────────── */
+        .row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.4rem;
+        }
+        .row-label { color: #8b949e; font-size: 0.75rem; flex: 1; white-space: nowrap; }
+        .row input[type=range] { width: 88px; accent-color: #58a6ff; flex-shrink: 0; }
+        .row-val {
+            color: #79c0ff;
+            font-size: 0.73rem;
+            width: 44px;
+            text-align: right;
+            flex-shrink: 0;
+            /* number-input variant */
+            background: none;
+            border: none;
+            border-bottom: 1px solid transparent;
+            font-family: monospace;
+            padding: 0;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .row-val:hover  { border-bottom-color: #30363d; }
+        .row-val:focus  { border-bottom-color: #58a6ff; color: #e6edf3; }
+        /* hide native spinner arrows */
+        .row-val::-webkit-outer-spin-button,
+        .row-val::-webkit-inner-spin-button { -webkit-appearance: none; }
+        .row-val[type=number] { -moz-appearance: textfield; }
+        .row select {
+            background: #161b22;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            font-family: monospace;
+            font-size: 0.73rem;
+            padding: 0.18rem 0.3rem;
+            border-radius: 4px;
+        }
+
+        .sep { border: none; border-top: 1px solid rgba(48,54,61,0.5); margin: 0.2rem 0; }
+        .sub-label { font-size: 0.68rem; color: #6e7681; letter-spacing: 0.06em; margin-top: 0.1rem; }
+
+        /* ── Toggle switch ───────────────────────────────────────────── */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+        .toggle-label { color: #c9d1d9; font-size: 0.75rem; flex: 1; }
+
+        .toggle {
+            position: relative;
+            width: 30px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+        .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .toggle-track {
+            position: absolute;
+            inset: 0;
+            background: #30363d;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toggle-track::after {
+            content: '';
+            position: absolute;
+            left: 2px;
+            top: 2px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #6e7681;
+            transition: transform 0.2s, background 0.2s;
+        }
+        .toggle input:checked + .toggle-track { background: rgba(88,166,255,0.3); }
+        .toggle input:checked + .toggle-track::after { transform: translateX(14px); background: #58a6ff; }
+
+        /* ── Species tabs ────────────────────────────────────────────── */
+        #species-tab-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            margin-bottom: 0.5rem;
+        }
+        .sp-tab {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.22rem 0.5rem;
+            border-radius: 5px;
+            border: 1px solid #30363d;
+            background: rgba(22,27,34,0.8);
+            color: #8b949e;
+            font-family: monospace;
+            font-size: 0.73rem;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .sp-tab:hover { border-color: #58a6ff44; color: #c9d1d9; }
+        .sp-tab.active { border-color: var(--sp-color); color: #e6edf3; background: rgba(88,166,255,0.06); }
+        .sp-tab .dot { font-size: 0.65rem; }
+
+        .sp-add {
+            padding: 0.22rem 0.5rem;
+            border-radius: 5px;
+            border: 1px dashed #30363d;
+            background: none;
+            color: #6e7681;
+            font-family: monospace;
+            font-size: 0.78rem;
+            cursor: pointer;
+            transition: all 0.15s;
+            line-height: 1;
+        }
+        .sp-add:hover { border-color: #58a6ff; color: #58a6ff; }
+
+        #species-panel { display: flex; flex-direction: column; gap: 0.35rem; }
+
+        .sp-remove {
+            margin-top: 0.2rem;
+            padding: 0.25rem 0;
+            border-radius: 5px;
+            border: 1px solid rgba(200,50,50,0.3);
+            background: none;
+            color: rgba(200,100,100,0.8);
+            font-family: monospace;
+            font-size: 0.72rem;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.15s;
+        }
+        .sp-remove:hover { border-color: rgba(200,50,50,0.7); color: #f85149; background: rgba(200,50,50,0.08); }
     </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 
-<div id="controls">
-    <h3>jiggle.js</h3>
+<div id="panel">
+    <div id="panel-title">
+        <span>jiggle.js</span>
+        <span id="fps"></span>
+    </div>
 
-    <h4>Thermal</h4>
-    <label>strength  <input type="range" id="thermal"  min="0" max="0.08"  step="0.001" value="0.018"> <span class="val" id="v-thermal">0.018</span></label>
-    <label>friction  <input type="range" id="friction" min="0" max="0.02"  step="0.001" value="0.006"> <span class="val" id="v-friction">0.006</span></label>
+    <!-- Particles -->
+    <div class="section open" id="sec-particles">
+        <button class="section-header"><span>Particles</span><span class="chevron">›</span></button>
+        <div class="section-body"><div class="section-inner"><div class="section-content">
+            <div id="species-tab-strip"></div>
+            <div id="species-panel"></div>
+        </div></div></div>
+    </div>
 
-    <hr class="sep">
-    <h4>Species A <span style="color:rgba(0,212,176,0.9)">●</span></h4>
-    <label>ε (A-A)   <input type="range" id="epsA"     min="0" max="0.01"  step="0.0001" value="0.003"> <span class="val" id="v-epsA">0.003</span></label>
-    <label>σ (A-A)   <input type="range" id="sigA"     min="5"  max="50"   step="1"      value="22">    <span class="val" id="v-sigA">22</span></label>
+    <!-- Thermal -->
+    <div class="section" id="sec-thermal">
+        <button class="section-header"><span>Thermal</span><span class="chevron">›</span></button>
+        <div class="section-body"><div class="section-inner"><div class="section-content">
+            <div class="row">
+                <span class="row-label">kBT</span>
+                <input type="range" id="kbt" min="0" max="0.3" step="0.002" value="0.03">
+                <input type="number" class="row-val" id="v-kbt" value="0.03">
+            </div>
+            <div class="row">
+                <span class="row-label">damping γ</span>
+                <input type="range" id="gamma" min="0" max="0.05" step="0.001" value="0.006">
+                <input type="number" class="row-val" id="v-gamma" value="0.006">
+            </div>
+            <hr class="sep">
+            <div class="row">
+                <span class="row-label">steps/frame</span>
+                <input type="range" id="steps" min="1" max="8" step="1" value="1">
+                <input type="number" class="row-val" id="v-steps" value="1">
+            </div>
+        </div></div></div>
+    </div>
 
-    <hr class="sep">
-    <h4>Species B <span style="color:rgba(220,100,60,0.9)">●</span></h4>
-    <label>ε (B-B)   <input type="range" id="epsB"     min="0" max="0.01"  step="0.0001" value="0.002"> <span class="val" id="v-epsB">0.002</span></label>
-    <label>σ (B-B)   <input type="range" id="sigB"     min="5"  max="50"   step="1"      value="14">    <span class="val" id="v-sigB">14</span></label>
+    <!-- Fields -->
+    <div class="section" id="sec-fields">
+        <button class="section-header"><span>Fields</span><span class="chevron">›</span></button>
+        <div class="section-body"><div class="section-inner"><div class="section-content">
 
-    <hr class="sep">
-    <label>link dist <input type="range" id="linkdist" min="50" max="300"  step="5"      value="100">   <span class="val" id="v-linkdist">100</span></label>
-    <label>gravity   <input type="range" id="gravity"  min="0"  max="0.1"  step="0.002"  value="0">     <span class="val" id="v-gravity">0</span></label>
+            <div class="sub-label">BOUNDARY FORCE</div>
+            <div class="toggle-row">
+                <span class="toggle-label">enabled</span>
+                <label class="toggle"><input type="checkbox" id="bf-on"><span class="toggle-track"></span></label>
+            </div>
+            <div class="row">
+                <span class="row-label">margin</span>
+                <input type="range" id="bf-margin" min="10" max="200" step="5" value="60">
+                <input type="number" class="row-val" id="v-bf-margin" value="60">
+            </div>
+            <div class="row">
+                <span class="row-label">strength</span>
+                <input type="range" id="bf-strength" min="0" max="2" step="0.05" value="0.4">
+                <input type="number" class="row-val" id="v-bf-strength" value="0.4">
+            </div>
+
+            <hr class="sep">
+            <div class="sub-label">ATTRACTOR</div>
+            <div class="toggle-row">
+                <span class="toggle-label">enabled</span>
+                <label class="toggle"><input type="checkbox" id="att-on"><span class="toggle-track"></span></label>
+            </div>
+            <div class="row">
+                <span class="row-label">strength</span>
+                <input type="range" id="att-strength" min="0" max="0.3" step="0.005" value="0.05">
+                <input type="number" class="row-val" id="v-att-strength" value="0.05">
+            </div>
+            <div class="row">
+                <span class="row-label">falloff</span>
+                <input type="range" id="att-falloff" min="0.5" max="3" step="0.1" value="1">
+                <input type="number" class="row-val" id="v-att-falloff" value="1">
+            </div>
+
+            <hr class="sep">
+            <div class="sub-label">VORTEX</div>
+            <div class="toggle-row">
+                <span class="toggle-label">enabled</span>
+                <label class="toggle"><input type="checkbox" id="vx-on"><span class="toggle-track"></span></label>
+            </div>
+            <div class="row">
+                <span class="row-label">strength</span>
+                <input type="range" id="vx-strength" min="-0.2" max="0.2" step="0.005" value="0.05">
+                <input type="number" class="row-val" id="v-vx-strength" value="0.05">
+            </div>
+
+            <hr class="sep">
+            <div class="sub-label">FLOCKING</div>
+            <div class="toggle-row">
+                <span class="toggle-label">enabled</span>
+                <label class="toggle"><input type="checkbox" id="fl-on"><span class="toggle-track"></span></label>
+            </div>
+            <div class="row">
+                <span class="row-label">separation</span>
+                <input type="range" id="fl-sep" min="0" max="1" step="0.01" value="0.25">
+                <input type="number" class="row-val" id="v-fl-sep" value="0.25">
+            </div>
+            <div class="row">
+                <span class="row-label">alignment</span>
+                <input type="range" id="fl-ali" min="0" max="0.5" step="0.005" value="0.08">
+                <input type="number" class="row-val" id="v-fl-ali" value="0.08">
+            </div>
+            <div class="row">
+                <span class="row-label">cohesion</span>
+                <input type="range" id="fl-coh" min="0" max="0.2" step="0.002" value="0.04">
+                <input type="number" class="row-val" id="v-fl-coh" value="0.04">
+            </div>
+
+        </div></div></div>
+    </div>
+
+    <!-- Mouse -->
+    <div class="section" id="sec-mouse">
+        <button class="section-header"><span>Mouse</span><span class="chevron">›</span></button>
+        <div class="section-body"><div class="section-inner"><div class="section-content">
+            <div class="toggle-row">
+                <span class="toggle-label">enabled</span>
+                <label class="toggle"><input type="checkbox" id="mouse-on" checked><span class="toggle-track"></span></label>
+            </div>
+            <hr class="sep">
+            <div class="sub-label">FORCE</div>
+            <div class="row">
+                <span class="row-label">strength</span>
+                <input type="range" id="mouseStr" min="0" max="0.2" step="0.005" value="0.06">
+                <input type="number" class="row-val" id="v-mouseStr" value="0.06">
+            </div>
+            <div class="row">
+                <span class="row-label">distance</span>
+                <input type="range" id="mouseDist" min="20" max="300" step="5" value="120">
+                <input type="number" class="row-val" id="v-mouseDist" value="120">
+            </div>
+            <hr class="sep">
+            <div class="sub-label">LINKS</div>
+            <div class="row">
+                <span class="row-label">distance</span>
+                <input type="range" id="mouseLinkDist" min="50" max="400" step="5" value="140">
+                <input type="number" class="row-val" id="v-mouseLinkDist" value="140">
+            </div>
+        </div></div></div>
+    </div>
+
+    <!-- World -->
+    <div class="section" id="sec-world">
+        <button class="section-header"><span>World</span><span class="chevron">›</span></button>
+        <div class="section-body"><div class="section-inner"><div class="section-content">
+            <div class="sub-label">GRAVITY</div>
+            <div class="row">
+                <span class="row-label">y</span>
+                <input type="range" id="gravity" min="-0.1" max="0.1" step="0.002" value="0">
+                <input type="number" class="row-val" id="v-gravity" value="0">
+            </div>
+            <hr class="sep">
+            <div class="sub-label">BOUNDARY</div>
+            <div class="row">
+                <span class="row-label">type</span>
+                <select id="boundary">
+                    <option value="periodic">periodic</option>
+                    <option value="reflective">reflective</option>
+                    <option value="absorbing">absorbing</option>
+                </select>
+            </div>
+            <hr class="sep">
+            <div class="sub-label">LINKS</div>
+            <div class="toggle-row">
+                <span class="toggle-label">enabled</span>
+                <label class="toggle"><input type="checkbox" id="links-on" checked><span class="toggle-track"></span></label>
+            </div>
+            <div class="row">
+                <span class="row-label">distance</span>
+                <input type="range" id="linkdist" min="50" max="300" step="5" value="100">
+                <input type="number" class="row-val" id="v-linkdist" value="100">
+            </div>
+        </div></div></div>
+    </div>
 </div>
 
 <script type="module">
 import {
-    Simulation, ThermalForce, LJForce, MouseForce, GravityForce, CanvasRenderer
+    Simulation, ThermalForce, LJForce, MouseForce, GravityForce, CanvasRenderer,
+    AttractorForce, VortexForce, BoundaryForce, FlockForce,
+    PeriodicBoundary, ReflectiveBoundary, AbsorbingBoundary,
 } from '../src/index.js';
 
+// ── Canvas ────────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
 canvas.width  = window.innerWidth;
 canvas.height = window.innerHeight;
 
-const sim = Simulation.fromMixture([
-    { species: 'A', count: 35, radius: 3 },
-    { species: 'B', count: 20, radius: 2.5 },
-], { width: canvas.width, height: canvas.height });
+// ── Species palette ───────────────────────────────────────────────────
+const PALETTE = [
+    { css: 'rgba(0,212,176,',   hex: '#00d4b0' },
+    { css: 'rgba(220,100,60,',  hex: '#dc643c' },
+    { css: 'rgba(160,100,220,', hex: '#a064dc' },
+    { css: 'rgba(220,80,150,',  hex: '#dc5096' },
+    { css: 'rgba(200,180,50,',  hex: '#c8b432' },
+    { css: 'rgba(80,160,220,',  hex: '#50a0dc' },
+    { css: 'rgba(80,200,100,',  hex: '#50c864' },
+    { css: 'rgba(220,60,60,',   hex: '#dc3c3c' },
+];
+const LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-const thermal = new ThermalForce({ friction: 0.006, strength: 0.018 });
-const gravity  = new GravityForce({ gy: 0 });
-const mouse    = new MouseForce({ dist: 120, strength: 0.06 });
+function nextAvailableLabel() {
+    const used = new Set(speciesList.map(s => s.id));
+    for (const c of LABELS) if (!used.has(c)) return c;
+    return null;
+}
 
-let lj = new LJForce({
-    species: {
-        A: { epsilon: 0.003, sigma: 22 },
-        B: { epsilon: 0.002, sigma: 14 },
-    },
-});
+function nextAvailablePalette() {
+    const used = new Set(speciesList.map(s => s.palette));
+    for (const p of PALETTE) if (!used.has(p)) return p;
+    return PALETTE[speciesList.length % PALETTE.length];
+}
 
-sim.addForce(thermal).addForce(lj).addForce(mouse).addForce(gravity);
+function gauss(mean, std) {
+    let u, v;
+    do { u = Math.random(); } while (u === 0);
+    do { v = Math.random(); } while (v === 0);
+    return mean + std * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// ── Species state ─────────────────────────────────────────────────────
+let speciesList = [
+    { id: 'A', palette: PALETTE[0], count: 35,  radius: 3,   epsilon: 0.003, sigma: 22, polydisperse: false, radiusStd: 0.5 },
+    { id: 'B', palette: PALETTE[1], count: 20,  radius: 2.5, epsilon: 0.002, sigma: 14, polydisperse: false, radiusStd: 0.5 },
+];
+let activeSpeciesIdx = 0;
+
+// ── Forces ────────────────────────────────────────────────────────────
+const thermal   = new ThermalForce({ temperature: 0.03, gamma: 0.006 });
+const gravity   = new GravityForce({ gy: 0 });
+const mouse     = new MouseForce({ dist: 120, strength: 0.06 });
+const attractor = new AttractorForce({ x: canvas.width / 2, y: canvas.height / 2, strength: 0.05 });
+const vortex    = new VortexForce({ x: canvas.width / 2, y: canvas.height / 2, strength: 0.05 });
+const boundary_f = new BoundaryForce({ margin: 60, strength: 0.4 });
+const flock     = new FlockForce();
+
+// Start field forces disabled
+attractor.enabled  = false;
+vortex.enabled     = false;
+boundary_f.enabled = false;
+flock.enabled      = false;
+
+let lj = buildLJ();
+let sim = buildSim();
+let stepsPerFrame = 1;
 
 const renderer = new CanvasRenderer(canvas, {
-    colorMap: {
-        A: 'rgba(0,212,176,',
-        B: 'rgba(220,100,60,',
-    },
-    lineColor:    'rgba(100,180,160,',
-    mouseColor:   'rgba(168,96,14,',
-    linkDist:     100,
+    colorMap:      colorMap(),
+    lineColor:     'rgba(120,180,165,',
+    mouseColor:    'rgba(168,96,14,',
+    linkDist:      100,
     mouseLinkDist: 140,
 });
 
+// ── Builders ──────────────────────────────────────────────────────────
+function colorMap() {
+    return Object.fromEntries(speciesList.map(sp => [sp.id, sp.palette.css]));
+}
+
+function buildLJ() {
+    return new LJForce({
+        species: Object.fromEntries(
+            speciesList.map(sp => [sp.id, { epsilon: sp.epsilon, sigma: sp.sigma }])
+        ),
+    });
+}
+
+function buildSim() {
+    const s = Simulation.fromMixture(
+        speciesList.map(sp => ({
+            species: sp.id,
+            count:   sp.count,
+            ...(sp.polydisperse
+                ? { radiusSampler: () => Math.max(0.5, gauss(sp.radius, sp.radiusStd)) }
+                : { radius: sp.radius }),
+        })),
+        { width: canvas.width, height: canvas.height }
+    );
+    s.addForce(thermal).addForce(lj).addForce(mouse).addForce(gravity)
+     .addForce(boundary_f).addForce(attractor).addForce(vortex).addForce(flock);
+    return s;
+}
+
+function rebuildLJ() {
+    sim.removeForce(lj);
+    lj = buildLJ();
+    sim.addForce(lj);
+}
+
+function rebuildSim() {
+    lj  = buildLJ();
+    sim = buildSim();
+    renderer.colorMap = colorMap();
+}
+
+// ── Species UI ────────────────────────────────────────────────────────
+function addSpecies() {
+    const id = nextAvailableLabel();
+    if (!id) return;
+    const palette     = nextAvailablePalette();
+    const count       = Math.max(1,    Math.round(gauss(22, 7)));
+    const radius      = Math.max(0.5,  gauss(2.5, 0.6));
+    const epsilon     = Math.max(0,    gauss(0.002, 0.0005));
+    const sigma       = Math.max(2,    gauss(16, 4));
+    speciesList.push({ id, palette, count, radius: +radius.toFixed(2), epsilon: +epsilon.toFixed(4), sigma: +sigma.toFixed(1), polydisperse: false, radiusStd: 0.5 });
+    activeSpeciesIdx = speciesList.length - 1;
+    rebuildSim();
+    renderSpeciesTabs();
+    renderSpeciesPanel();
+}
+
+function removeSpecies() {
+    if (speciesList.length <= 1) return;
+    speciesList.splice(activeSpeciesIdx, 1);
+    activeSpeciesIdx = Math.min(activeSpeciesIdx, speciesList.length - 1);
+    rebuildSim();
+    renderSpeciesTabs();
+    renderSpeciesPanel();
+}
+
+function renderSpeciesTabs() {
+    const strip = document.getElementById('species-tab-strip');
+    strip.innerHTML = '';
+    speciesList.forEach((sp, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'sp-tab' + (i === activeSpeciesIdx ? ' active' : '');
+        btn.style.setProperty('--sp-color', sp.palette.hex);
+        btn.innerHTML = `<span class="dot" style="color:${sp.palette.hex}">●</span>${sp.id}`;
+        btn.addEventListener('click', () => {
+            activeSpeciesIdx = i;
+            renderSpeciesTabs();
+            renderSpeciesPanel();
+        });
+        strip.appendChild(btn);
+    });
+    const addBtn = document.createElement('button');
+    addBtn.className = 'sp-add';
+    addBtn.textContent = '+';
+    addBtn.title = 'Add species';
+    addBtn.addEventListener('click', addSpecies);
+    strip.appendChild(addBtn);
+}
+
+function makeRow(label, opts, getter, setter) {
+    const row      = document.createElement('div');
+    row.className  = 'row';
+    const lbl      = document.createElement('span');
+    lbl.className  = 'row-label';
+    lbl.textContent = label;
+    const input    = document.createElement('input');
+    Object.assign(input, { type: 'range', min: opts.min, max: opts.max, step: opts.step, value: getter() });
+    input.style.accentColor = speciesList[activeSpeciesIdx].palette.hex;
+    const numIn    = document.createElement('input');
+    numIn.type     = 'number';
+    numIn.className = 'row-val';
+    numIn.value    = input.value;
+    input.addEventListener('input', () => { numIn.value = input.value; setter(parseFloat(input.value)); });
+    numIn.addEventListener('change', () => {
+        const v = parseFloat(numIn.value);
+        input.value = v; // slider auto-clamps to its own min/max
+        setter(v);
+    });
+    row.append(lbl, input, numIn);
+    return row;
+}
+
+function renderSpeciesPanel() {
+    const panel = document.getElementById('species-panel');
+    panel.innerHTML = '';
+    const sp = speciesList[activeSpeciesIdx];
+
+    const rows = [
+        ['count',  { min: 1,   max: 120,  step: 1      }, () => sp.count,   v => { sp.count   = v; rebuildSim(); }],
+        ['radius', { min: 0.5, max: 12,   step: 0.5    }, () => sp.radius,  v => { sp.radius  = v; rebuildSim(); }],
+    ];
+    for (const r of rows) panel.appendChild(makeRow(...r));
+
+    // polydisperse toggle + std slider
+    const polyRow = document.createElement('div');
+    polyRow.className = 'toggle-row';
+    polyRow.innerHTML = `<span class="toggle-label" style="font-size:0.75rem;color:#8b949e">polydisperse</span>
+        <label class="toggle"><input type="checkbox" id="poly-toggle" ${sp.polydisperse ? 'checked' : ''}><span class="toggle-track"></span></label>`;
+    panel.appendChild(polyRow);
+
+    const stdRow = makeRow('radius σ', { min: 0.1, max: 4, step: 0.1 }, () => sp.radiusStd, v => { sp.radiusStd = v; rebuildSim(); });
+    stdRow.style.opacity = sp.polydisperse ? '1' : '0.35';
+    stdRow.querySelector('input[type=range]').disabled = !sp.polydisperse;
+    panel.appendChild(stdRow);
+
+    panel.querySelector('#poly-toggle').addEventListener('change', e => {
+        sp.polydisperse = e.target.checked;
+        stdRow.style.opacity = sp.polydisperse ? '1' : '0.35';
+        stdRow.querySelector('input[type=range]').disabled = !sp.polydisperse;
+        rebuildSim();
+    });
+
+    const sep = document.createElement('hr'); sep.className = 'sep'; panel.appendChild(sep);
+
+    const ljRows = [
+        ['ε', { min: 0, max: 0.02, step: 0.0001 }, () => sp.epsilon, v => { sp.epsilon = v; rebuildLJ(); }],
+        ['σ', { min: 2, max: 80,   step: 1      }, () => sp.sigma,   v => { sp.sigma   = v; rebuildLJ(); }],
+    ];
+    for (const r of ljRows) panel.appendChild(makeRow(...r));
+
+    if (speciesList.length > 1) {
+        const rm = document.createElement('button');
+        rm.className = 'sp-remove';
+        rm.textContent = `remove ${sp.id}`;
+        rm.addEventListener('click', removeSpecies);
+        panel.appendChild(rm);
+    }
+}
+
+// ── Accordion ─────────────────────────────────────────────────────────
+document.querySelectorAll('.section-header').forEach(hdr => {
+    hdr.addEventListener('click', () => hdr.closest('.section').classList.toggle('open'));
+});
+
+// ── Static wiring ─────────────────────────────────────────────────────
+function wire(id, cb) {
+    const slider = document.getElementById(id);
+    const numIn  = document.getElementById('v-' + id);
+    slider.addEventListener('input', () => {
+        if (numIn) numIn.value = slider.value;
+        cb(parseFloat(slider.value));
+    });
+    if (numIn) {
+        numIn.addEventListener('change', () => {
+            const v = parseFloat(numIn.value);
+            slider.value = v; // slider auto-clamps to its own min/max
+            cb(v);
+        });
+    }
+}
+function wireCheck(id, cb) {
+    document.getElementById(id).addEventListener('change', e => cb(e.target.checked));
+}
+
+wire('kbt',           v => thermal.temperature      = v);
+wire('gamma',         v => thermal.gamma            = v);
+wire('steps',         v => stepsPerFrame            = v);
+
+wireCheck('bf-on',    v => boundary_f.enabled       = v);
+wire('bf-margin',     v => boundary_f.margin        = v);
+wire('bf-strength',   v => boundary_f.strength      = v);
+
+wireCheck('att-on',   v => attractor.enabled        = v);
+wire('att-strength',  v => attractor.strength       = v);
+wire('att-falloff',   v => attractor.falloff        = v);
+
+wireCheck('vx-on',    v => vortex.enabled           = v);
+wire('vx-strength',   v => vortex.strength          = v);
+
+wireCheck('fl-on',    v => flock.enabled            = v);
+wire('fl-sep',        v => flock.separationWeight   = v);
+wire('fl-ali',        v => flock.alignmentWeight    = v);
+wire('fl-coh',        v => flock.cohesionWeight     = v);
+
+wireCheck('mouse-on', v => { mouse.enabled = v; renderer.mouseLinksEnabled = v; });
+wire('mouseStr',      v => mouse.strength           = v);
+wire('mouseDist',     v => mouse.dist               = v);
+wire('mouseLinkDist', v => renderer.mouseLinkDist   = v);
+wire('gravity',       v => gravity.gy               = v);
+wireCheck('links-on', v => renderer.linksEnabled    = v);
+wire('linkdist',      v => renderer.linkDist        = v);
+
+document.getElementById('boundary').addEventListener('change', e => {
+    const map = {
+        periodic:   new PeriodicBoundary(),
+        reflective: new ReflectiveBoundary(),
+        absorbing:  new AbsorbingBoundary(),
+    };
+    sim.boundary = map[e.target.value];
+});
+
+// ── Mouse tracking ────────────────────────────────────────────────────
 canvas.addEventListener('mousemove', e => mouse.setPosition(e.clientX, e.clientY));
 canvas.addEventListener('mouseleave', () => mouse.clear());
 
+// ── Resize ────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
     sim.resize(canvas.width, canvas.height);
+    attractor.x = vortex.x = canvas.width  / 2;
+    attractor.y = vortex.y = canvas.height / 2;
 });
 
-function loop() {
-    sim.step();
-    renderer.render(sim.particles, mouse);
+// ── FPS counter ───────────────────────────────────────────────────────
+const fpsEl = document.getElementById('fps');
+let lastT = performance.now(), frameCount = 0;
+function updateFps(now) {
+    frameCount++;
+    if (now - lastT >= 1000) {
+        fpsEl.textContent = `${Math.round(frameCount * 1000 / (now - lastT))} fps`;
+        frameCount = 0;
+        lastT = now;
+    }
+}
+
+// ── Init & loop ───────────────────────────────────────────────────────
+renderSpeciesTabs();
+renderSpeciesPanel();
+
+function loop(now) {
+    updateFps(now);
+    for (let s = 0; s < stepsPerFrame; s++) sim.step();
+    renderer.render(sim.store, mouse, sim);
     requestAnimationFrame(loop);
 }
-loop();
-
-// Rebuild LJForce from current slider values
-function rebuildLJ() {
-    const epsA = parseFloat(document.getElementById('epsA').value);
-    const sigA = parseFloat(document.getElementById('sigA').value);
-    const epsB = parseFloat(document.getElementById('epsB').value);
-    const sigB = parseFloat(document.getElementById('sigB').value);
-    sim.removeForce(lj);
-    lj = new LJForce({ species: { A: { epsilon: epsA, sigma: sigA }, B: { epsilon: epsB, sigma: sigB } } });
-    sim.addForce(lj);
-}
-
-function wire(id, valId, cb) {
-    const input = document.getElementById(id);
-    const label = document.getElementById(valId);
-    input.addEventListener('input', () => { label.textContent = input.value; cb(parseFloat(input.value)); });
-}
-
-wire('thermal',  'v-thermal',  v => thermal.strength = v);
-wire('friction', 'v-friction', v => thermal.friction  = v);
-wire('gravity',  'v-gravity',  v => gravity.gy        = v);
-wire('linkdist', 'v-linkdist', v => renderer.linkDist  = v);
-
-for (const id of ['epsA', 'sigA', 'epsB', 'sigB']) {
-    const input = document.getElementById(id);
-    input.addEventListener('input', () => {
-        document.getElementById('v-' + id).textContent = input.value;
-        rebuildLJ();
-    });
-}
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
