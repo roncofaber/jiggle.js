@@ -383,6 +383,18 @@
     <div class="section" id="sec-world">
         <button class="section-header"><span>World</span><span class="chevron">›</span></button>
         <div class="section-body"><div class="section-inner"><div class="section-content">
+            <div class="sub-label">BOX SIZE</div>
+            <div class="row">
+                <span class="row-label">width (Å)</span>
+                <input type="range" id="box-w" min="50" max="2000" step="10" value="400">
+                <input type="number" class="row-val" id="v-box-w" value="400">
+            </div>
+            <div class="row">
+                <span class="row-label">height (Å)</span>
+                <input type="range" id="box-h" min="50" max="2000" step="10" value="300">
+                <input type="number" class="row-val" id="v-box-h" value="300">
+            </div>
+            <hr class="sep">
             <div class="sub-label">GRAVITY</div>
             <div class="row">
                 <span class="row-label">gy (Å/fs²)</span>
@@ -465,11 +477,12 @@ function gauss(mean, std) {
     return mean + std * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-// ── Simulation scale ──────────────────────────────────────────────────
-// positions/distances in Å; canvas displays at `scale` pixels/Å
-let scale = 2;   // px/Å — 400 Å box fits an 800 px canvas width
-const simW = () => canvas.width  / scale;
-const simH = () => canvas.height / scale;
+// ── Simulation box (Å) and display scale (px/Å) ──────────────────────
+// boxW/boxH are the simulation domain in Å — independent of window size.
+// scale maps Å → canvas pixels; the box may not fill the window exactly.
+let boxW = 400;   // Å
+let boxH = 300;   // Å
+let scale = canvas.width / boxW;  // initial scale to fit box in canvas width
 
 // ── LJ cutoff ─────────────────────────────────────────────────────────
 let ljCutoff = 12; // Å — fixed cutoff (MD standard); null = 2.5σ per pair
@@ -485,8 +498,8 @@ let activeSpeciesIdx = 0;
 const thermal    = new ThermalForce({ temperature: 300, gamma: 0.01 });
 const gravity    = new GravityForce({ gy: 0 });
 const mouse      = new MouseForce({ dist: 10, strength: 1.0 });
-const attractor  = new AttractorForce({ x: simW() / 2, y: simH() / 2, strength: 50 });
-const vortex     = new VortexForce({ x: simW() / 2, y: simH() / 2, strength: 50 });
+const attractor  = new AttractorForce({ x: boxW / 2, y: boxH / 2, strength: 50 });
+const vortex     = new VortexForce({ x: boxW / 2, y: boxH / 2, strength: 50 });
 const boundary_f = new BoundaryForce({ margin: 20, strength: 0.05 });
 const flock      = new FlockForce();
 
@@ -534,7 +547,7 @@ function buildSim() {
                 ? { radiusSampler: () => Math.max(0.2, gauss(sp.radius, sp.radiusStd)) }
                 : { radius: sp.radius }),
         })),
-        { width: simW(), height: simH(), dt: 1 }
+        { width: boxW, height: boxH, dt: 1 }
     );
     s.addForce(thermal).addForce(lj).addForce(mouse).addForce(gravity)
      .addForce(boundary_f).addForce(attractor).addForce(vortex).addForce(flock);
@@ -700,6 +713,8 @@ function wireCheck(id, cb) {
     document.getElementById(id).addEventListener('change', e => cb(e.target.checked));
 }
 
+wire('box-w', v => { boxW = v; rebuildSim(); clampView(); });
+wire('box-h', v => { boxH = v; rebuildSim(); clampView(); });
 wire('lj-cutoff', v => { ljCutoff = v; rebuildLJ(); });
 wire('kbt',           v => thermal.temperature      = v);
 wire('gamma',         v => thermal.gamma            = v);
@@ -800,11 +815,11 @@ canvas.addEventListener('wheel', e => {
     document.getElementById('v-scale').value = +newScale.toFixed(2);
 }, { passive: false });
 
-// ── Resize — rescale to keep the sim box filling the canvas width ─────
+// ── Resize — keep boxW/boxH fixed; rescale so the box fills canvas width ──
 window.addEventListener('resize', () => {
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
-    scale = canvas.width / sim.width;
+    scale = canvas.width / boxW;
     renderer.scale = scale;
     renderer.viewX = 0;
     renderer.viewY = 0;
@@ -827,6 +842,9 @@ function updateFps(now) {
 // ── Init & loop ───────────────────────────────────────────────────────
 renderSpeciesTabs();
 renderSpeciesPanel();
+// Sync computed initial scale to slider UI
+document.getElementById('scale').value   = +scale.toFixed(2);
+document.getElementById('v-scale').value = +scale.toFixed(2);
 
 function loop(now) {
     updateFps(now);
