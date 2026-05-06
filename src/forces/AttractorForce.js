@@ -1,6 +1,6 @@
 // Point gravity well at a fixed (x, y).  All particles are pulled toward it with
 // force proportional to mass (so all species accelerate equally, like gravity).
-// falloff controls the power-law exponent: 1 = linear, 2 = inverse-square.
+// falloff controls the radial power-law: 1 = inverse-r, 2 = inverse-square.
 export class AttractorForce {
     constructor({ x = 0, y = 0, strength = 0.05, falloff = 1, minDist = 10 } = {}) {
         this.x        = x;

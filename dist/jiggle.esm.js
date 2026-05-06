@@ -679,7 +679,7 @@ class LJForce {
             const sr    = p.sigma2 / d2eff;
             const sr3   = sr * sr * sr;
             const sr6   = sr3 * sr3;
-            pe += (p.f24 / 24) * (sr6 - sr3) * 2 - p.V_shift;
+            pe += (p.f24 / 6) * (sr6 - sr3) - p.V_shift; // 4ε[(σ/r)¹²-(σ/r)⁶] - V(rc)
         }, periodic);
         return pe;
     }
@@ -847,7 +847,7 @@ class SpringForce {
 
 // Point gravity well at a fixed (x, y).  All particles are pulled toward it with
 // force proportional to mass (so all species accelerate equally, like gravity).
-// falloff controls the power-law exponent: 1 = linear, 2 = inverse-square.
+// falloff controls the radial power-law: 1 = inverse-r, 2 = inverse-square.
 class AttractorForce {
     constructor({ x = 0, y = 0, strength = 0.05, falloff = 1, minDist = 10 } = {}) {
         this.x        = x;

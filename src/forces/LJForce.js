@@ -60,7 +60,7 @@ export class LJForce {
             const sr    = p.sigma2 / d2eff;
             const sr3   = sr * sr * sr;
             const sr6   = sr3 * sr3;
-            pe += (p.f24 / 24) * (sr6 - sr3) * 2 - p.V_shift;
+            pe += (p.f24 / 6) * (sr6 - sr3) - p.V_shift; // 4ε[(σ/r)¹²-(σ/r)⁶] - V(rc)
         }, periodic);
         return pe;
     }
