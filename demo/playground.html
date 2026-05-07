@@ -512,6 +512,119 @@ boundary_f.enabled = false;
 flock.enabled      = false;
 mouse.enabled      = false;   // off by default
 
+// ── State persistence ─────────────────────────────────────────────────
+let _savedState = null;
+let _saveTimer;
+function saveState() {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => {
+        try {
+            localStorage.setItem('jiggle_playground', JSON.stringify({
+                speciesList: speciesList.map(sp => ({
+                    id: sp.id, paletteIdx: PALETTE.indexOf(sp.palette),
+                    count: sp.count, radiusMult: sp.radiusMult, radius: sp.radius,
+                    epsilon: sp.epsilon, sigma: sp.sigma, mass: sp.mass,
+                    polydisperse: sp.polydisperse, radiusStd: sp.radiusStd,
+                })),
+                boxW, boxH, ljCutoff, stepsPerFrame, dt: sim.dt, scale,
+                temperature: thermal.temperature, gamma: thermal.gamma,
+                thermostatType: document.getElementById('thermo-type').value,
+                thermoTau: berendsen.tau, thermoNu: andersen.nu,
+                boundary: document.getElementById('boundary').value,
+                gravityGy: gravity.gy,
+                bfEnabled: boundary_f.enabled, bfMargin: boundary_f.margin, bfStrength: boundary_f.strength,
+                attEnabled: attractor.enabled, attStrength: attractor.strength, attFalloff: attractor.falloff,
+                vxEnabled: vortex.enabled, vxStrength: vortex.strength,
+                flEnabled: flock.enabled, flSep: flock.separationWeight, flAli: flock.alignmentWeight, flCoh: flock.cohesionWeight,
+                linksEnabled: renderer.linksEnabled, linkDist: renderer.linkDist, mouseLinkDist: renderer.mouseLinkDist,
+                mouseEnabled: mouse.enabled, mouseStr: mouse.strength, mouseDist: mouse.dist,
+                logInterval,
+                activeTab: document.querySelector('.tab-btn.active')?.dataset?.tab ?? 'particles',
+            }));
+        } catch(e) {}
+    }, 500);
+}
+function restoreVars() {
+    try { _savedState = JSON.parse(localStorage.getItem('jiggle_playground')); } catch(e) {}
+    const s = _savedState; if (!s) return;
+    if (s.speciesList?.length)
+        speciesList = s.speciesList.map(sp => ({ ...sp, palette: PALETTE[sp.paletteIdx >= 0 ? sp.paletteIdx : 0] }));
+    if (s.boxW  != null) boxW  = s.boxW;
+    if (s.boxH  != null) boxH  = s.boxH;
+    if (s.scale != null) scale = s.scale;
+    if (s.ljCutoff != null) ljCutoff = s.ljCutoff;
+    const T = s.temperature;
+    if (T != null) thermal.temperature = berendsen.temperature = andersen.temperature = noseHoover.temperature = T;
+    if (s.gamma     != null) thermal.gamma         = s.gamma;
+    if (s.thermoTau != null) { berendsen.tau = noseHoover.tau = s.thermoTau; }
+    if (s.thermoNu  != null) andersen.nu            = s.thermoNu;
+    if (s.gravityGy != null) gravity.gy             = s.gravityGy;
+    if (s.bfEnabled  != null) boundary_f.enabled    = s.bfEnabled;
+    if (s.bfMargin   != null) boundary_f.margin     = s.bfMargin;
+    if (s.bfStrength != null) boundary_f.strength   = s.bfStrength;
+    if (s.attEnabled  != null) attractor.enabled    = s.attEnabled;
+    if (s.attStrength != null) attractor.strength   = s.attStrength;
+    if (s.attFalloff  != null) attractor.falloff    = s.attFalloff;
+    if (s.vxEnabled  != null) vortex.enabled        = s.vxEnabled;
+    if (s.vxStrength != null) vortex.strength       = s.vxStrength;
+    if (s.flEnabled  != null) flock.enabled          = s.flEnabled;
+    if (s.flSep      != null) flock.separationWeight = s.flSep;
+    if (s.flAli      != null) flock.alignmentWeight  = s.flAli;
+    if (s.flCoh      != null) flock.cohesionWeight   = s.flCoh;
+    if (s.mouseEnabled != null) mouse.enabled  = s.mouseEnabled;
+    if (s.mouseStr     != null) mouse.strength = s.mouseStr;
+    if (s.mouseDist    != null) mouse.dist     = s.mouseDist;
+}
+function restoreDom() {
+    const s = _savedState; if (!s) return;
+    if (s.stepsPerFrame != null) stepsPerFrame = s.stepsPerFrame;
+    if (s.logInterval   != null) logInterval   = s.logInterval;
+    if (s.dt            != null) sim.dt        = s.dt;
+    if (s.linksEnabled  != null) { renderer.linksEnabled     = s.linksEnabled;     setCheck('links-on', s.linksEnabled); }
+    if (s.linkDist      != null) renderer.linkDist           = s.linkDist;
+    if (s.mouseLinkDist != null) renderer.mouseLinkDist      = s.mouseLinkDist;
+    if (s.mouseEnabled  != null) renderer.mouseLinksEnabled  = s.mouseEnabled;
+    syncSlider('box-w',        boxW);
+    syncSlider('box-h',        boxH);
+    syncSlider('kbt',          thermal.temperature);
+    syncSlider('gamma',        thermal.gamma);
+    syncSlider('thermo-tau',   berendsen.tau);
+    syncSlider('thermo-nu',    andersen.nu);
+    syncSlider('steps',        s.stepsPerFrame ?? 1);
+    syncSlider('dt',           s.dt ?? 1);
+    syncSlider('lj-cutoff',    ljCutoff);
+    syncSlider('gravity',      gravity.gy);
+    syncSlider('bf-margin',    boundary_f.margin);
+    syncSlider('bf-strength',  boundary_f.strength);
+    syncSlider('att-strength', attractor.strength);
+    syncSlider('att-falloff',  attractor.falloff);
+    syncSlider('vx-strength',  vortex.strength);
+    syncSlider('fl-sep',       flock.separationWeight);
+    syncSlider('fl-ali',       flock.alignmentWeight);
+    syncSlider('fl-coh',       flock.cohesionWeight);
+    syncSlider('mouseStr',     mouse.strength);
+    syncSlider('mouseDist',    mouse.dist);
+    syncSlider('mouseLinkDist',renderer.mouseLinkDist);
+    syncSlider('linkdist',     renderer.linkDist);
+    syncSlider('log-interval', logInterval);
+    setCheck('bf-on',    boundary_f.enabled);
+    setCheck('att-on',   attractor.enabled);
+    setCheck('vx-on',    vortex.enabled);
+    setCheck('fl-on',    flock.enabled);
+    setCheck('mouse-on', mouse.enabled);
+    if (s.thermostatType) { document.getElementById('thermo-type').value = s.thermostatType; setThermostat(s.thermostatType); }
+    if (s.boundary) {
+        document.getElementById('boundary').value = s.boundary;
+        const bmap = { periodic: new PeriodicBoundary(), reflective: new ReflectiveBoundary(), absorbing: new AbsorbingBoundary() };
+        if (bmap[s.boundary]) sim.boundary = bmap[s.boundary];
+    }
+    if (s.activeTab) {
+        const btn = document.querySelector(`.tab-btn[data-tab="${s.activeTab}"]`);
+        if (btn) { document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active')); btn.classList.add('active'); document.getElementById('tab-' + s.activeTab)?.classList.add('active'); }
+    }
+}
+restoreVars();
+
 let lj = buildLJ();
 let sim = buildSim();
 let stepsPerFrame = 1;
@@ -633,7 +746,7 @@ function addSpecies() {
     reconcileCount(sp);
     rebuildLJ();
     renderer.colorMap = colorMap();
-    renderSpeciesTabs(); renderSpeciesPanel();
+    renderSpeciesTabs(); renderSpeciesPanel(); saveState();
 }
 function removeSpecies() {
     if (speciesList.length <= 1) return;
@@ -645,7 +758,7 @@ function removeSpecies() {
     activeSpeciesIdx = Math.min(activeSpeciesIdx, speciesList.length - 1);
     rebuildLJ();
     renderer.colorMap = colorMap();
-    renderSpeciesTabs(); renderSpeciesPanel();
+    renderSpeciesTabs(); renderSpeciesPanel(); saveState();
 }
 function renderSpeciesTabs() {
     const strip = document.getElementById('species-tab-strip');
@@ -671,8 +784,8 @@ function makeRow(label, opts, getter, setter) {
     input.style.accentColor = speciesList[activeSpeciesIdx].palette.hex;
     const numIn = document.createElement('input');
     numIn.type = 'number'; numIn.className = 'row-val'; numIn.value = input.value;
-    input.addEventListener('input', () => { numIn.value = input.value; setter(parseFloat(input.value)); });
-    numIn.addEventListener('change', () => { const v = parseFloat(numIn.value); input.value = v; setter(v); });
+    input.addEventListener('input', () => { numIn.value = input.value; setter(parseFloat(input.value)); saveState(); });
+    numIn.addEventListener('change', () => { const v = parseFloat(numIn.value); input.value = v; setter(v); saveState(); });
     row.append(lbl, input, numIn); return row;
 }
 function renderSpeciesPanel() {
@@ -700,7 +813,7 @@ function renderSpeciesPanel() {
         sp.polydisperse = e.target.checked;
         stdRow.style.opacity = sp.polydisperse ? '1' : '0.35';
         stdRow.querySelector('input[type=range]').disabled = !sp.polydisperse;
-        refreshRadii(sp);
+        refreshRadii(sp); saveState();
     });
 
     const sep = document.createElement('hr'); sep.className = 'sep'; panel.appendChild(sep);
@@ -805,6 +918,7 @@ function loadPreset(name) {
     _stepsSinceLog = 0; _cachedPE = 0;
 
     renderSpeciesTabs(); renderSpeciesPanel();
+    saveState();
 }
 
 document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -818,6 +932,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+        saveState();
     });
 });
 
@@ -833,11 +948,11 @@ function wire(id, cb) {
     const slider = document.getElementById(id);
     const numIn  = document.getElementById('v-' + id);
     if (!slider) return;
-    slider.addEventListener('input', () => { if (numIn) numIn.value = slider.value; cb(parseFloat(slider.value)); });
-    if (numIn) numIn.addEventListener('change', () => { const v = parseFloat(numIn.value); slider.value = v; cb(v); });
+    slider.addEventListener('input', () => { if (numIn) numIn.value = slider.value; cb(parseFloat(slider.value)); saveState(); });
+    if (numIn) numIn.addEventListener('change', () => { const v = parseFloat(numIn.value); slider.value = v; cb(v); saveState(); });
 }
 function wireCheck(id, cb) {
-    document.getElementById(id)?.addEventListener('change', e => cb(e.target.checked));
+    document.getElementById(id)?.addEventListener('change', e => { cb(e.target.checked); saveState(); });
 }
 
 wire('box-w',        v => { boxW = v; sim.resize(boxW, sim.height); clampView(); });
@@ -860,7 +975,7 @@ function setThermostat(t) {
     document.getElementById('row-tau').style.display   = (t === 'berendsen' || t === 'nosehoovert') ? '' : 'none';
     document.getElementById('row-nu').style.display    = t === 'andersen'    ? '' : 'none';
 }
-document.getElementById('thermo-type').addEventListener('change', e => setThermostat(e.target.value));
+document.getElementById('thermo-type').addEventListener('change', e => { setThermostat(e.target.value); saveState(); });
 wire('steps',        v => stepsPerFrame           = v);
 wire('dt',           v => sim.dt                  = v);
 wire('scale',        v => { const cx = canvas.width/2, cy = canvas.height/2; renderer.viewX += cx/renderer.scale - cx/v; renderer.viewY += cy/renderer.scale - cy/v; renderer.scale = v; scale = v; clampView(); });
@@ -888,7 +1003,7 @@ wireCheck('mouse-on', v => { mouse.enabled = v; renderer.mouseLinksEnabled = v; 
 
 document.getElementById('boundary').addEventListener('change', e => {
     const map = { periodic: new PeriodicBoundary(), reflective: new ReflectiveBoundary(), absorbing: new AbsorbingBoundary() };
-    sim.boundary = map[e.target.value];
+    sim.boundary = map[e.target.value]; saveState();
 });
 
 // ── Energy tracking ───────────────────────────────────────────────────
@@ -1016,6 +1131,7 @@ function updateFps(now) {
 // ── Init ──────────────────────────────────────────────────────────────
 renderSpeciesTabs();
 renderSpeciesPanel();
+restoreDom();
 syncSlider('scale', +scale.toFixed(2));
 
 // ── Loop ──────────────────────────────────────────────────────────────
