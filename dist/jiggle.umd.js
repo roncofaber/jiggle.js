@@ -242,10 +242,11 @@
             return ke;
         }
 
-        // Instantaneous temperature in Kelvin (2D equipartition: KE = N·kBT, T = KE/(N·kB)).
+        // Instantaneous temperature in Kelvin (2D equipartition: KE = N·kBT).
+        // KE is in amu·(Å/fs)²; kB in those units = KB * FORCE_CONV.
         temperature() {
             const n = this.store.count;
-            return n ? this.kineticEnergy() / (n * KB) : 0;
+            return n ? this.kineticEnergy() / (n * KB * FORCE_CONV) : 0;
         }
 
         // ── Resize ────────────────────────────────────────────────────────
@@ -359,14 +360,14 @@
     //   temperature  — target temperature in Kelvin
     //   gamma        — friction coefficient in 1/fs; typical range 0.001–0.1
 
-    let _spare = null;
-    function randG() {
-        if (_spare !== null) { const s = _spare; _spare = null; return s; }
+    let _spare$1 = null;
+    function randG$1() {
+        if (_spare$1 !== null) { const s = _spare$1; _spare$1 = null; return s; }
         let u, v;
         do { u = Math.random(); } while (u === 0);
         do { v = Math.random(); } while (v === 0);
         const mag = Math.sqrt(-2 * Math.log(u));
-        _spare = mag * Math.sin(2 * Math.PI * v);
+        _spare$1 = mag * Math.sin(2 * Math.PI * v);
         return       mag * Math.cos(2 * Math.PI * v);
     }
 
@@ -384,9 +385,127 @@
             const c2sq = (1 - c1 * c1) * kBT * (sim?._fconv ?? FORCE_CONV); // Å²/fs² (mass-free)
             for (let i = 0; i < count; i++) {
                 const c2 = Math.sqrt(c2sq / mass[i]);
-                vx[i] = c1 * vx[i] + c2 * randG();
-                vy[i] = c1 * vy[i] + c2 * randG();
+                vx[i] = c1 * vx[i] + c2 * randG$1();
+                vy[i] = c1 * vy[i] + c2 * randG$1();
             }
+        }
+    }
+
+    // Berendsen thermostat — exponential velocity rescaling toward T_target.
+    // Not a true canonical ensemble (kinetic energy fluctuations are suppressed),
+    // but smooth and widely used for equilibration. Coupling time tau controls
+    // how aggressively the thermostat drives the system toward T_target.
+    //
+    // Parameters:
+    //   temperature  — target temperature in Kelvin
+    //   tau          — coupling time in fs; larger = weaker coupling
+
+    class BerendsenForce {
+        constructor({ temperature = 300, tau = 100 } = {}) {
+            this.temperature = temperature; // K
+            this.tau         = tau;         // fs
+            this.isLangevin  = true;
+            this.enabled     = false;
+        }
+
+        apply(store, sim) {
+            const { vx, vy, mass, count } = store;
+            const dt = sim?.dt ?? 1;
+            let KE = 0;
+            for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
+            if (KE < 1e-30) return;
+            const KE_target = count * KB * this.temperature * FORCE_CONV; // [amu·(Å/fs)²]
+            const lam = Math.sqrt(Math.max(0, 1 + (dt / this.tau) * (KE_target / KE - 1)));
+            for (let i = 0; i < count; i++) { vx[i] *= lam; vy[i] *= lam; }
+        }
+    }
+
+    // Andersen thermostat — stochastic collision model.
+    // At rate nu (1/fs), each particle's velocity is redrawn from Maxwell-Boltzmann
+    // at T_target. Produces the correct canonical ensemble but disrupts velocity
+    // autocorrelation (not suitable for transport property measurements).
+    //
+    // Parameters:
+    //   temperature  — target temperature in Kelvin
+    //   nu           — collision frequency in 1/fs; higher = tighter temperature control
+
+    let _spare = null;
+    function randG() {
+        if (_spare !== null) { const s = _spare; _spare = null; return s; }
+        let u, v;
+        do { u = Math.random(); } while (u === 0);
+        do { v = Math.random(); } while (v === 0);
+        const mag = Math.sqrt(-2 * Math.log(u));
+        _spare = mag * Math.sin(2 * Math.PI * v);
+        return       mag * Math.cos(2 * Math.PI * v);
+    }
+
+    class AndersenForce {
+        constructor({ temperature = 300, nu = 0.01 } = {}) {
+            this.temperature = temperature; // K
+            this.nu          = nu;          // 1/fs
+            this.isLangevin  = true;
+            this.enabled     = false;
+        }
+
+        apply(store, sim) {
+            const { vx, vy, mass, count } = store;
+            const dt     = sim?.dt ?? 1;
+            const kBT_fc = KB * this.temperature * FORCE_CONV; // [amu·Å²/fs²]
+            const p      = Math.min(1, this.nu * dt);
+            for (let i = 0; i < count; i++) {
+                if (Math.random() < p) {
+                    const sig = Math.sqrt(kBT_fc / mass[i]);
+                    vx[i] = sig * randG();
+                    vy[i] = sig * randG();
+                }
+            }
+        }
+    }
+
+    // Nosé-Hoover thermostat — deterministic extended-system thermostat.
+    // Adds a heat-bath degree of freedom xi (friction, 1/fs) coupled to the kinetic
+    // energy. Produces the correct canonical ensemble while preserving deterministic
+    // dynamics. Parameterised by relaxation time tau (fs);
+    // thermostat mass Q = N_f · kBT · tau².
+    //
+    // Integration: v-NHVE at the O slot of BAOAB —
+    //   1. scale v by exp(-xi · dt/2)
+    //   2. recompute KE, then xi += dt · (2·KE − N_f·kBT_amu) / Q
+    //   3. scale v by exp(-xi · dt/2)
+    //
+    // Parameters:
+    //   temperature  — target temperature in Kelvin
+    //   tau          — relaxation time in fs; characteristic oscillation period ≈ 2π·tau
+
+    class NoseHooverForce {
+        constructor({ temperature = 300, tau = 100 } = {}) {
+            this.temperature = temperature; // K
+            this.tau         = tau;         // fs
+            this.xi          = 0;           // thermostat friction, 1/fs
+            this.isLangevin  = true;
+            this.enabled     = false;
+        }
+
+        apply(store, sim) {
+            const { vx, vy, mass, count } = store;
+            const dt    = sim?.dt ?? 1;
+            const Nf    = 2 * count;                           // DOF in 2D
+            const kBT_a = KB * this.temperature * FORCE_CONV; // kBT in [amu·Å²/fs²]
+            const Q     = Nf * kBT_a * this.tau * this.tau;   // thermostat mass [amu·Å²]
+
+            // first half-friction kick
+            const s1 = Math.exp(-this.xi * 0.5 * dt);
+            for (let i = 0; i < count; i++) { vx[i] *= s1; vy[i] *= s1; }
+
+            // update xi from current KE
+            let KE = 0;
+            for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
+            this.xi += dt * (2 * KE - Nf * kBT_a) / Q;
+
+            // second half-friction kick
+            const s2 = Math.exp(-this.xi * 0.5 * dt);
+            for (let i = 0; i < count; i++) { vx[i] *= s2; vy[i] *= s2; }
         }
     }
 
@@ -1285,7 +1404,9 @@
     }
 
     exports.AbsorbingBoundary = AbsorbingBoundary;
+    exports.AndersenForce = AndersenForce;
     exports.AttractorForce = AttractorForce;
+    exports.BerendsenForce = BerendsenForce;
     exports.BoundaryForce = BoundaryForce;
     exports.CanvasRenderer = CanvasRenderer;
     exports.CellGrid = CellGrid;
@@ -1297,6 +1418,7 @@
     exports.MorseForce = MorseForce;
     exports.MouseForce = MouseForce;
     exports.MouseLJForce = MouseLJForce;
+    exports.NoseHooverForce = NoseHooverForce;
     exports.Particle = Particle;
     exports.ParticleStore = ParticleStore;
     exports.PeriodicBoundary = PeriodicBoundary;

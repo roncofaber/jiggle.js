@@ -145,10 +145,11 @@ export class Simulation {
         return ke;
     }
 
-    // Instantaneous temperature in Kelvin (2D equipartition: KE = N·kBT, T = KE/(N·kB)).
+    // Instantaneous temperature in Kelvin (2D equipartition: KE = N·kBT).
+    // KE is in amu·(Å/fs)²; kB in those units = KB * FORCE_CONV.
     temperature() {
         const n = this.store.count;
-        return n ? this.kineticEnergy() / (n * KB) : 0;
+        return n ? this.kineticEnergy() / (n * KB * FORCE_CONV) : 0;
     }
 
     // ── Resize ────────────────────────────────────────────────────────
