@@ -101,14 +101,15 @@
 
     class Simulation {
         constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50, dt = 1 } = {}) {
-            this.width    = width;
-            this.height   = height;
-            this.boundary = boundary;
-            this.maxSpeed = maxSpeed;
-            this.dt       = dt;
-            this._fconv   = FORCE_CONV;
-            this.forces   = [];
-            this.store    = new ParticleStore(Math.max(count, 32));
+            this.width           = width;
+            this.height          = height;
+            this.boundary        = boundary;
+            this.maxSpeed        = maxSpeed;
+            this.dt              = dt;
+            this._fconv          = FORCE_CONV;
+            this.forces          = [];
+            this.zeroCOMVelocity = false; // subtract COM drift every step
+            this.store           = new ParticleStore(Math.max(count, 32));
             for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
         }
 
@@ -328,6 +329,34 @@
                 if (s2 > maxSpeed2) {
                     const inv = this.maxSpeed / Math.sqrt(s2);
                     vx[i] *= inv; vy[i] *= inv;
+                }
+            }
+
+            // ── COM velocity + angular momentum removal ───────────────────
+            if (this.zeroCOMVelocity && n2 > 0) {
+                // 1. Linear momentum: subtract COM velocity
+                let px = 0, py = 0, M = 0;
+                for (let i = 0; i < n2; i++) { px += mass[i] * vx[i]; py += mass[i] * vy[i]; M += mass[i]; }
+                const vcx = px / M, vcy = py / M;
+                for (let i = 0; i < n2; i++) { vx[i] -= vcx; vy[i] -= vcy; }
+
+                // 2. Angular momentum: subtract rigid-body rotation about COM
+                let comX = 0, comY = 0;
+                for (let i = 0; i < n2; i++) { comX += mass[i] * x[i]; comY += mass[i] * y[i]; }
+                comX /= M; comY /= M;
+                let L = 0, I = 0;
+                for (let i = 0; i < n2; i++) {
+                    const rx = x[i] - comX, ry = y[i] - comY;
+                    L += mass[i] * (rx * vy[i] - ry * vx[i]);
+                    I += mass[i] * (rx * rx   + ry * ry);
+                }
+                if (I > 1e-12) {
+                    const omega = L / I;
+                    for (let i = 0; i < n2; i++) {
+                        const rx = x[i] - comX, ry = y[i] - comY;
+                        vx[i] += omega * ry;
+                        vy[i] -= omega * rx;
+                    }
                 }
             }
         }

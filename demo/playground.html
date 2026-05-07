@@ -371,6 +371,10 @@
                     <option value="absorbing">absorbing</option>
                 </select>
             </div>
+            <div class="toggle-row" style="margin-top:0.3rem">
+                <span class="toggle-label">zero COM velocity</span>
+                <label class="toggle"><input type="checkbox" id="com-zero"><span class="toggle-track"></span></label>
+            </div>
             <hr class="sep">
             <div class="sub-label">DISPLAY</div>
             <div class="row">
@@ -538,7 +542,7 @@ function saveState() {
                 flEnabled: flock.enabled, flSep: flock.separationWeight, flAli: flock.alignmentWeight, flCoh: flock.cohesionWeight,
                 linksEnabled: renderer.linksEnabled, linkDist: renderer.linkDist, mouseLinkDist: renderer.mouseLinkDist,
                 mouseEnabled: mouse.enabled, mouseStr: mouse.strength, mouseDist: mouse.dist,
-                logInterval,
+                logInterval, comZero: sim.zeroCOMVelocity,
                 activeTab: document.querySelector('.tab-btn.active')?.dataset?.tab ?? 'particles',
             }));
         } catch(e) {}
@@ -574,6 +578,7 @@ function restoreVars() {
     if (s.mouseEnabled != null) mouse.enabled  = s.mouseEnabled;
     if (s.mouseStr     != null) mouse.strength = s.mouseStr;
     if (s.mouseDist    != null) mouse.dist     = s.mouseDist;
+    // comZero applied in restoreDom (sim not yet built here)
 }
 function restoreDom() {
     const s = _savedState; if (!s) return;
@@ -612,6 +617,7 @@ function restoreDom() {
     setCheck('vx-on',    vortex.enabled);
     setCheck('fl-on',    flock.enabled);
     setCheck('mouse-on', mouse.enabled);
+    if (s.comZero != null) { sim.zeroCOMVelocity = s.comZero; setCheck('com-zero', s.comZero); }
     if (s.thermostatType) { document.getElementById('thermo-type').value = s.thermostatType; setThermostat(s.thermostatType); }
     if (s.boundary) {
         document.getElementById('boundary').value = s.boundary;
@@ -994,6 +1000,7 @@ wire('mouseLinkDist',v => renderer.mouseLinkDist  = v);
 wire('linkdist',     v => renderer.linkDist       = v);
 wire('log-interval', v => logInterval = Math.max(1, Math.round(v)));
 
+wireCheck('com-zero', v => sim.zeroCOMVelocity            = v);
 wireCheck('bf-on',    v => boundary_f.enabled            = v);
 wireCheck('att-on',   v => attractor.enabled             = v);
 wireCheck('vx-on',    v => vortex.enabled                = v);
