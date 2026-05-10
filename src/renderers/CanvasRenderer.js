@@ -168,10 +168,16 @@ export class CanvasRenderer {
                     const alpha = (1 - Math.sqrt(d2) / linkDist) * 0.5;
                     this._fillView(va, store, i);
                     this._fillView(vb, store, j);
-                    drawLink(ctx, va, vb, alpha);
-
-                    if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
-                        vb.x = x[j] + dx; vb.y = y[j] + dy;
+                    const isPBC = periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10);
+                    if (!isPBC) {
+                        drawLink(ctx, va, vb, alpha);
+                    } else {
+                        // Two edge stubs using min-image positions (matches bucketed renderer)
+                        const bx0 = vb.x, by0 = vb.y;
+                        vb.x = va.x - dx; vb.y = va.y - dy;
+                        drawLink(ctx, va, vb, alpha);
+                        va.x = bx0 + dx; va.y = by0 + dy;
+                        vb.x = bx0; vb.y = by0;
                         drawLink(ctx, va, vb, alpha);
                     }
                 }, periodic);

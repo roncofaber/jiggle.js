@@ -93,6 +93,18 @@ class PeriodicBoundary {
 const KB         = 0.001987;   // kcal / (mol·K)  — Boltzmann constant
 const FORCE_CONV = 4.184e-4;   // (Å/fs)² per (kcal/mol) per amu  (= 1/mvv2e, LAMMPS real)
 
+// Box-Muller Gaussian sampler (mean=0, std=1)
+let _spare$2 = null;
+function randG$2() {
+    if (_spare$2 !== null) { const s = _spare$2; _spare$2 = null; return s; }
+    let u, v;
+    do { u = Math.random(); } while (u === 0);
+    do { v = Math.random(); } while (v === 0);
+    const mag = Math.sqrt(-2 * Math.log(u));
+    _spare$2 = mag * Math.sin(2 * Math.PI * v);
+    return       mag * Math.cos(2 * Math.PI * v);
+}
+
 class Simulation {
     constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50, dt = 1 } = {}) {
         this.width           = width;
@@ -242,6 +254,27 @@ class Simulation {
     temperature() {
         const n = this.store.count;
         return n ? this.kineticEnergy() / (n * KB * FORCE_CONV) : 0;
+    }
+
+    // Assign velocities from the Maxwell-Boltzmann distribution at `temperature` K.
+    // Each component drawn from N(0, √(kBT/m)).  COM velocity is zeroed afterward
+    // so the system starts with no bulk drift.
+    initVelocities(temperature) {
+        const { vx, vy, mass, count } = this.store;
+        const kBT = KB * temperature * FORCE_CONV; // amu·(Å/fs)²
+        for (let i = 0; i < count; i++) {
+            const sig = Math.sqrt(kBT / mass[i]);
+            vx[i] = sig * randG$2();
+            vy[i] = sig * randG$2();
+        }
+        // subtract COM velocity
+        let px = 0, py = 0, M = 0;
+        for (let i = 0; i < count; i++) { px += mass[i] * vx[i]; py += mass[i] * vy[i]; M += mass[i]; }
+        if (M > 0) {
+            const vcx = px / M, vcy = py / M;
+            for (let i = 0; i < count; i++) { vx[i] -= vcx; vy[i] -= vcy; }
+        }
+        return this;
     }
 
     // ── Resize ────────────────────────────────────────────────────────
@@ -438,7 +471,10 @@ class BerendsenForce {
         for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
         if (KE < 1e-30) return;
         const KE_target = count * KB * this.temperature * FORCE_CONV; // [amu·(Å/fs)²]
-        const lam = Math.sqrt(Math.max(0, 1 + (dt / this.tau) * (KE_target / KE - 1)));
+        // Exact solution of dT/dt = (T_target − T)/τ — always real and positive,
+        // unlike the Euler form (1 + dt/τ·(KE_target/KE − 1)) which can go negative.
+        const decay = Math.exp(-dt / this.tau);
+        const lam   = Math.sqrt(decay + (1 - decay) * (KE_target / KE));
         for (let i = 0; i < count; i++) { vx[i] *= lam; vy[i] *= lam; }
     }
 }
@@ -497,14 +533,23 @@ class AndersenForce {
 //   2. recompute KE, then xi += dt · (2·KE − N_f·kBT_amu) / Q
 //   3. scale v by exp(-xi · dt/2)
 //
+// Stability: xi is clamped to ±10/tau after each update.  In equilibrium
+// |xi| ~ O(1/tau), so the clamp has a ≥10× margin and never activates;
+// during transients (LJ blow-up, cold start) it bounds the velocity scaling
+// per half-sub-step to exp(10·dts/(2·tau)) ≈ 1 + small, preventing the
+// freeze cycle where xi → ±∞ zeros all velocities for thousands of steps.
+//
 // Parameters:
 //   temperature  — target temperature in Kelvin
 //   tau          — relaxation time in fs; characteristic oscillation period ≈ 2π·tau
+//   nRespa       — number of NH sub-steps per O slot (default 4); more sub-steps keep
+//                  each velocity scaling small and prevent runaway when xi is large.
 
 class NoseHooverForce {
-    constructor({ temperature = 300, tau = 100 } = {}) {
+    constructor({ temperature = 300, tau = 100, nRespa = 4 } = {}) {
         this.temperature = temperature; // K
         this.tau         = tau;         // fs
+        this.nRespa      = nRespa;
         this.xi          = 0;           // thermostat friction, 1/fs
         this.isLangevin  = true;
         this.enabled     = false;
@@ -515,20 +560,38 @@ class NoseHooverForce {
         const dt    = sim?.dt ?? 1;
         const Nf    = 2 * count;                           // DOF in 2D
         const kBT_a = KB * this.temperature * FORCE_CONV; // kBT in [amu·Å²/fs²]
-        const Q     = Nf * kBT_a * this.tau * this.tau;   // thermostat mass [amu·Å²]
 
-        // first half-friction kick
-        const s1 = Math.exp(-this.xi * 0.5 * dt);
-        for (let i = 0; i < count; i++) { vx[i] *= s1; vy[i] *= s1; }
+        // T = 0: freeze all velocities and reset xi; Q = 0 would cause NaN otherwise.
+        if (kBT_a < 1e-30) {
+            this.xi = 0;
+            for (let i = 0; i < count; i++) { vx[i] = 0; vy[i] = 0; }
+            return;
+        }
 
-        // update xi from current KE
-        let KE = 0;
-        for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
-        this.xi += dt * (2 * KE - Nf * kBT_a) / Q;
+        const Q      = Nf * kBT_a * this.tau * this.tau;  // thermostat mass [amu·Å²]
+        const n      = this.nRespa;
+        const dts    = dt / n;                             // sub-step size
+        const xiMax  = 10 / this.tau;                      // runaway guard; equilibrium |xi| << xiMax
 
-        // second half-friction kick
-        const s2 = Math.exp(-this.xi * 0.5 * dt);
-        for (let i = 0; i < count; i++) { vx[i] *= s2; vy[i] *= s2; }
+        // Clamp any xi that arrived in a bad state before the first sub-step.
+        if (this.xi >  xiMax) this.xi =  xiMax;
+        if (this.xi < -xiMax) this.xi = -xiMax;
+
+        // v-NHVE with nRespa sub-steps: keeps each half-step scaling exp(±|xi|·dts/2)
+        // small and prevents the single-step runaway that occurs when xi is large.
+        for (let r = 0; r < n; r++) {
+            const s1 = Math.exp(-this.xi * 0.5 * dts);
+            for (let i = 0; i < count; i++) { vx[i] *= s1; vy[i] *= s1; }
+
+            let KE = 0;
+            for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
+            this.xi += dts * (2 * KE - Nf * kBT_a) / Q;
+            if (this.xi >  xiMax) this.xi =  xiMax;
+            if (this.xi < -xiMax) this.xi = -xiMax;
+
+            const s2 = Math.exp(-this.xi * 0.5 * dts);
+            for (let i = 0; i < count; i++) { vx[i] *= s2; vy[i] *= s2; }
+        }
     }
 }
 
@@ -1094,24 +1157,29 @@ class BoundaryForce {
 
 // Boid-style flocking: separation (avoid crowding), alignment (match heading),
 // cohesion (steer toward group centre).  Uses CellGrid for O(n) pair detection.
+//
+// Runs in the Langevin (O) slot so that weights act as direct per-step velocity
+// changes, not as forces attenuated by FORCE_CONV.  At typical thermal velocities
+// (~0.02 Å/fs at 300 K) the default weights give gentle, responsive boid behaviour.
 class FlockForce {
     constructor({
         perceptionRadius = 80,
         separationRadius = 25,
-        separationWeight = 0.25,
-        alignmentWeight  = 0.08,
-        cohesionWeight   = 0.04,
+        separationWeight = 0.002,
+        alignmentWeight  = 0.1,
+        cohesionWeight   = 0.0002,
     } = {}) {
         this.perceptionRadius = perceptionRadius;
         this.separationRadius = separationRadius;
         this.separationWeight = separationWeight;
         this.alignmentWeight  = alignmentWeight;
         this.cohesionWeight   = cohesionWeight;
+        this.isLangevin = true;
         this._grid = new CellGrid();
     }
 
     apply(store, sim) {
-        const { x, y, vx, vy, fx, fy, count } = store;
+        const { x, y, vx, vy, count } = store;
         if (count < 2) return;
 
         const { perceptionRadius: pr, separationRadius: sr,
@@ -1161,15 +1229,15 @@ class FlockForce {
             const bi = i * 7;
             const nb = buf[bi + 6];
 
-            fx[i] += sw * buf[bi    ];
-            fy[i] += sw * buf[bi + 1];
+            vx[i] += sw * buf[bi    ];
+            vy[i] += sw * buf[bi + 1];
 
             if (nb > 0) {
                 const invNb = 1 / nb;
-                fx[i] += cw * buf[bi + 4] * invNb;
-                fy[i] += cw * buf[bi + 5] * invNb;
-                fx[i] += aw * (buf[bi + 2] * invNb - vx[i]);
-                fy[i] += aw * (buf[bi + 3] * invNb - vy[i]);
+                vx[i] += cw * buf[bi + 4] * invNb;
+                vy[i] += cw * buf[bi + 5] * invNb;
+                vx[i] += aw * (buf[bi + 2] * invNb - vx[i]);
+                vy[i] += aw * (buf[bi + 3] * invNb - vy[i]);
             }
         }
     }
@@ -1343,10 +1411,16 @@ class CanvasRenderer {
                     const alpha = (1 - Math.sqrt(d2) / linkDist) * 0.5;
                     this._fillView(va, store, i);
                     this._fillView(vb, store, j);
-                    drawLink(ctx, va, vb, alpha);
-
-                    if (periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10)) {
-                        vb.x = x[j] + dx; vb.y = y[j] + dy;
+                    const isPBC = periodic && (Math.abs(dx - dxr) + Math.abs(dy - dyr) > 1e-10);
+                    if (!isPBC) {
+                        drawLink(ctx, va, vb, alpha);
+                    } else {
+                        // Two edge stubs using min-image positions (matches bucketed renderer)
+                        const bx0 = vb.x, by0 = vb.y;
+                        vb.x = va.x - dx; vb.y = va.y - dy;
+                        drawLink(ctx, va, vb, alpha);
+                        va.x = bx0 + dx; va.y = by0 + dy;
+                        vb.x = bx0; vb.y = by0;
                         drawLink(ctx, va, vb, alpha);
                     }
                 }, periodic);
