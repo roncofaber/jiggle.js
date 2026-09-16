@@ -29,11 +29,9 @@
 <script type="module">
 import { Simulation, ThermalForce, LJForce, CanvasRenderer, PeriodicBoundary, SimulationClock }
     from '../src/index.js';
+import { fullscreenCanvas, statsOverlay } from './demo.js';
 
-const canvas = document.getElementById('c');
-const dpr = window.devicePixelRatio || 1;
-canvas.width  = window.innerWidth * dpr;
-canvas.height = window.innerHeight * dpr;
+const { canvas, dpr } = fullscreenCanvas();
 
 // ── Parameters ────────────────────────────────────────────────────────
 const SIGMA   = 3.4;                          // Å — argon LJ diameter
@@ -72,21 +70,16 @@ renderer.viewX = simW / 2 - window.innerWidth  / (2 * scale);
 renderer.viewY = simH / 2 - window.innerHeight / (2 * scale);
 
 // ── Loop ──────────────────────────────────────────────────────────────
-const tempEl = document.getElementById('temp');
 const fpsEl  = document.getElementById('fps');
-let lastT = performance.now(), frames = 0;
+const tempEl = document.getElementById('temp');
+const stats = statsOverlay({ fpsEl, tempEl });
 const clock = new SimulationClock({ stepsPerSecond: 240 });
 
 function loop(now) {
     const steps = clock.tick(now);
     for (let i = 0; i < steps; i++) sim.step();
     renderer.render(sim.store, { x: null, y: null }, sim);
-    frames++;
-    if (now - lastT >= 1000) {
-        fpsEl.textContent  = Math.round(frames * 1000 / (now - lastT)) + ' fps';
-        tempEl.textContent = Math.round(sim.temperature());
-        frames = 0; lastT = now;
-    }
+    stats.frame(now, sim);
     requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

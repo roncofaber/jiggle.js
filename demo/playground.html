@@ -447,12 +447,10 @@ import {
     AttractorForce, VortexForce, BoundaryForce, FlockForce,
     PeriodicBoundary, ReflectiveBoundary, AbsorbingBoundary, SimulationClock,
 } from '../src/index.js';
+import { fullscreenCanvas, statsOverlay } from './demo.js';
 
 // ── Canvas ────────────────────────────────────────────────────────────
-const canvas = document.getElementById('c');
-const dpr = window.devicePixelRatio || 1;
-canvas.width  = window.innerWidth * dpr;
-canvas.height = window.innerHeight * dpr;
+const { canvas, dpr } = fullscreenCanvas();
 
 // ── Species palette ───────────────────────────────────────────────────
 const PALETTE = [
@@ -1129,14 +1127,7 @@ window.addEventListener('resize', () => {
 
 // ── FPS counter ───────────────────────────────────────────────────────
 const fpsEl = document.getElementById('fps');
-let lastT = performance.now(), frameCount = 0;
-function updateFps(now) {
-    frameCount++;
-    if (now - lastT >= 1000) {
-        fpsEl.textContent = Math.round(frameCount * 1000 / (now - lastT)) + ' fps';
-        frameCount = 0; lastT = now;
-    }
-}
+const stats = statsOverlay({ fpsEl });
 
 // ── Init ──────────────────────────────────────────────────────────────
 renderSpeciesTabs();
@@ -1146,7 +1137,7 @@ syncSlider('scale', +scale.toFixed(2));
 
 // ── Loop ──────────────────────────────────────────────────────────────
 function loop(now) {
-    updateFps(now);
+    stats.frame(now);
     const steps = clock.tick(now);
     for (let s = 0; s < steps; s++) sim.step();
     _stepsSinceLog += steps;
