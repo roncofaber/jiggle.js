@@ -450,8 +450,9 @@ import {
 
 // ── Canvas ────────────────────────────────────────────────────────────
 const canvas = document.getElementById('c');
-canvas.width  = window.innerWidth;
-canvas.height = window.innerHeight;
+const dpr = window.devicePixelRatio || 1;
+canvas.width  = window.innerWidth * dpr;
+canvas.height = window.innerHeight * dpr;
 
 // ── Species palette ───────────────────────────────────────────────────
 const PALETTE = [
@@ -485,7 +486,7 @@ function gauss(mean, std) {
 
 // ── Simulation box (Å) and display scale (px/Å) ──────────────────────
 let boxW = 400, boxH = 300;
-let scale = canvas.width / boxW;
+let scale = window.innerWidth / boxW;
 
 // ── LJ cutoff ─────────────────────────────────────────────────────────
 let ljCutoff = 12;
@@ -637,6 +638,7 @@ let stepsPerFrame = 1;
 const clock = new SimulationClock({ stepsPerSecond: stepsPerFrame * 60 });
 
 const renderer = new CanvasRenderer(canvas, {
+    dpr,
     colorMap:      colorMap(),
     lineColor:     'rgba(120,180,165,',
     mouseColor:    'rgba(168,96,14,',
@@ -907,7 +909,7 @@ function loadPreset(name) {
     const boundaryMap = { periodic: new PeriodicBoundary(), reflective: new ReflectiveBoundary(), absorbing: new AbsorbingBoundary() };
     sim.boundary = boundaryMap[p.boundary];
 
-    scale = canvas.width / boxW;
+    scale = window.innerWidth / boxW;
     renderer.scale = scale; renderer.viewX = 0; renderer.viewY = 0;
     renderer.colorMap = colorMap();
     clampView();
@@ -985,7 +987,7 @@ function setThermostat(t) {
 document.getElementById('thermo-type').addEventListener('change', e => { setThermostat(e.target.value); saveState(); });
 wire('steps',        v => { stepsPerFrame = v; clock.stepsPerSecond = v * 60; });
 wire('dt',           v => sim.dt                  = v);
-wire('scale',        v => { const cx = canvas.width/2, cy = canvas.height/2; renderer.viewX += cx/renderer.scale - cx/v; renderer.viewY += cy/renderer.scale - cy/v; renderer.scale = v; scale = v; clampView(); });
+wire('scale',        v => { const cx = window.innerWidth/2, cy = window.innerHeight/2; renderer.viewX += cx/renderer.scale - cx/v; renderer.viewY += cy/renderer.scale - cy/v; renderer.scale = v; scale = v; clampView(); });
 wire('gravity',      v => gravity.gy              = v);
 wire('bf-margin',    v => boundary_f.margin       = v);
 wire('bf-strength',  v => boundary_f.strength     = v);
@@ -1097,7 +1099,7 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 // ── Viewport clamping ─────────────────────────────────────────────────
 function clampView() {
     const s = renderer.scale;
-    const visW = canvas.width  / s, visH = canvas.height / s;
+    const visW = window.innerWidth  / s, visH = window.innerHeight / s;
     const loX = Math.min(0, sim.width  - visW), hiX = Math.max(0, sim.width  - visW);
     const loY = Math.min(0, sim.height - visH), hiY = Math.max(0, sim.height - visH);
     renderer.viewX = Math.max(loX, Math.min(hiX, renderer.viewX));
@@ -1119,8 +1121,8 @@ canvas.addEventListener('wheel', e => {
 
 // ── Resize ────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    scale = canvas.width / boxW;
+    canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
+    scale = window.innerWidth / boxW;
     renderer.scale = scale; renderer.viewX = 0; renderer.viewY = 0;
     syncSlider('scale', +scale.toFixed(2));
 });

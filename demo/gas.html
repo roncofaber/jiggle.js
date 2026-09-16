@@ -31,8 +31,9 @@ import { Simulation, ThermalForce, LJForce, CanvasRenderer, ReflectiveBoundary, 
     from '../src/index.js';
 
 const canvas = document.getElementById('c');
-canvas.width  = window.innerWidth;
-canvas.height = window.innerHeight;
+const dpr = window.devicePixelRatio || 1;
+canvas.width  = window.innerWidth * dpr;
+canvas.height = window.innerHeight * dpr;
 
 // ── Parameters ────────────────────────────────────────────────────────
 const SIGMA = 3.4;    // Å
@@ -50,16 +51,17 @@ const thermal = new ThermalForce({ temperature: 800, gamma: 0.002 });
 sim.addForce(lj).addForce(thermal);
 
 // ── Renderer ──────────────────────────────────────────────────────────
-const scale = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+const scale = Math.min(window.innerWidth / simW, window.innerHeight / simH) * 0.92;
 const renderer = new CanvasRenderer(canvas, {
+    dpr,
     scale,
     dotColor:      'rgba(220,120,60,',
     lineColor:     'rgba(220,120,60,',
     linksEnabled:  false,
     boxColor:      'rgba(255,255,255,0.18)',
 });
-renderer.viewX = simW / 2 - canvas.width  / (2 * scale);
-renderer.viewY = simH / 2 - canvas.height / (2 * scale);
+renderer.viewX = simW / 2 - window.innerWidth  / (2 * scale);
+renderer.viewY = simH / 2 - window.innerHeight / (2 * scale);
 
 // ── Loop ──────────────────────────────────────────────────────────────
 const tempEl = document.getElementById('temp');
@@ -82,11 +84,11 @@ function loop(now) {
 requestAnimationFrame(loop);
 
 window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const s = Math.min(canvas.width / simW, canvas.height / simH) * 0.92;
+    canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
+    const s = Math.min(window.innerWidth / simW, window.innerHeight / simH) * 0.92;
     renderer.scale = s;
-    renderer.viewX = simW / 2 - canvas.width  / (2 * s);
-    renderer.viewY = simH / 2 - canvas.height / (2 * s);
+    renderer.viewX = simW / 2 - window.innerWidth  / (2 * s);
+    renderer.viewY = simH / 2 - window.innerHeight / (2 * s);
 });
 </script>
 </body>
