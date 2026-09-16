@@ -12,7 +12,7 @@ export class MouseLJForce {
     setPosition(x, y) { this.x = x; this.y = y; }
     clear()            { this.x = null; this.y = null; }
 
-    apply(store) {
+    apply(store, sim) {
         if (this.x === null) return;
         const { x, y, fx, fy, count } = store;
         const { epsilon, sigma } = this;
@@ -20,10 +20,15 @@ export class MouseLJForce {
         const cutoff2 = cutoff * cutoff;
         const mx = this.x, my = this.y;
         const minD2 = (sigma * 0.9) ** 2;
+        const periodic = sim?.boundary?.isPeriodic ?? false;
 
         for (let i = 0; i < count; i++) {
-            const dx = x[i] - mx;
-            const dy = y[i] - my;
+            let dx = x[i] - mx;
+            let dy = y[i] - my;
+            if (periodic) {
+                const mi = sim.boundary.minImage(dx, dy, sim);
+                dx = mi[0]; dy = mi[1];
+            }
             const d2 = dx * dx + dy * dy;
             if (d2 === 0 || d2 >= cutoff2) continue;
 

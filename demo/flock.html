@@ -27,7 +27,7 @@
 <a class="back" href="index.html">← demos</a>
 
 <script type="module">
-import { Simulation, ThermalForce, FlockForce, CanvasRenderer, PeriodicBoundary }
+import { Simulation, ThermalForce, FlockForce, CanvasRenderer, PeriodicBoundary, SimulationClock }
     from '../src/index.js';
 
 const canvas = document.getElementById('c');
@@ -77,9 +77,11 @@ renderer.viewY = simH / 2 - canvas.height / (2 * scale);
 // ── Loop ──────────────────────────────────────────────────────────────
 const fpsEl = document.getElementById('fps');
 let lastT = performance.now(), frames = 0;
+const clock = new SimulationClock({ stepsPerSecond: 120 });
 
 function loop(now) {
-    for (let i = 0; i < 2; i++) sim.step();
+    const steps = clock.tick(now);
+    for (let i = 0; i < steps; i++) sim.step();
     renderer.render(sim.store, { x: null, y: null }, sim);
     frames++;
     if (now - lastT >= 1000) {

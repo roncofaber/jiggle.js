@@ -445,7 +445,7 @@ import {
     Simulation, ThermalForce, BerendsenForce, AndersenForce, NoseHooverForce,
     LJForce, MouseForce, GravityForce, CanvasRenderer,
     AttractorForce, VortexForce, BoundaryForce, FlockForce,
-    PeriodicBoundary, ReflectiveBoundary, AbsorbingBoundary,
+    PeriodicBoundary, ReflectiveBoundary, AbsorbingBoundary, SimulationClock,
 } from '../src/index.js';
 
 // ── Canvas ────────────────────────────────────────────────────────────
@@ -634,6 +634,7 @@ restoreVars();
 let lj = buildLJ();
 let sim = buildSim();
 let stepsPerFrame = 1;
+const clock = new SimulationClock({ stepsPerSecond: stepsPerFrame * 60 });
 
 const renderer = new CanvasRenderer(canvas, {
     colorMap:      colorMap(),
@@ -982,7 +983,7 @@ function setThermostat(t) {
     document.getElementById('row-nu').style.display    = t === 'andersen'    ? '' : 'none';
 }
 document.getElementById('thermo-type').addEventListener('change', e => { setThermostat(e.target.value); saveState(); });
-wire('steps',        v => stepsPerFrame           = v);
+wire('steps',        v => { stepsPerFrame = v; clock.stepsPerSecond = v * 60; });
 wire('dt',           v => sim.dt                  = v);
 wire('scale',        v => { const cx = canvas.width/2, cy = canvas.height/2; renderer.viewX += cx/renderer.scale - cx/v; renderer.viewY += cy/renderer.scale - cy/v; renderer.scale = v; scale = v; clampView(); });
 wire('gravity',      v => gravity.gy              = v);
@@ -1144,8 +1145,9 @@ syncSlider('scale', +scale.toFixed(2));
 // ── Loop ──────────────────────────────────────────────────────────────
 function loop(now) {
     updateFps(now);
-    for (let s = 0; s < stepsPerFrame; s++) sim.step();
-    _stepsSinceLog += stepsPerFrame;
+    const steps = clock.tick(now);
+    for (let s = 0; s < steps; s++) sim.step();
+    _stepsSinceLog += steps;
     if (_stepsSinceLog >= logInterval) {
         _stepsSinceLog = 0;
         _cachedPE = lj.potentialEnergy(sim.store, sim);

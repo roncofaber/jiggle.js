@@ -12,6 +12,7 @@ export class CanvasRenderer {
         scale         = 1,            // pixels / Å
         colorMap      = {},
         boxColor      = null, // stroke color for sim box outline, e.g. 'rgba(255,255,255,0.2)'
+        dpr           = 1,    // device pixel ratio: set canvas.width = cssWidth * dpr for sharp HiDPI rendering
         drawParticle  = null, // (ctx, p) => void — custom particle drawing
         drawLink      = null, // (ctx, pi, pj, alpha) => void — custom link drawing
         drawMouseLink = null, // (ctx, p, mouse, alpha) => void  (mouse is pixel {x,y})
@@ -25,6 +26,7 @@ export class CanvasRenderer {
         this.linkDist      = linkDist;
         this.mouseLinkDist = mouseLinkDist;
         this.scale         = scale;
+        this.dpr           = dpr;
         this.viewX         = 0; // Å — viewport left edge in simulation space
         this.viewY         = 0; // Å — viewport top  edge in simulation space
         this.boxColor      = boxColor;
@@ -86,15 +88,17 @@ export class CanvasRenderer {
     // sim: optional Simulation — used for box size and periodic boundary.
     render(store, mouse = { x: null, y: null }, sim = null) {
         const { ctx, canvas } = this;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // CSS-pixel coordinate space: canvas.width = cssWidth * dpr
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        ctx.clearRect(0, 0, canvas.width / this.dpr, canvas.height / this.dpr);
 
         const scale = this.scale;
         const vX    = this.viewX;
         const vY    = this.viewY;
         const n     = store.count;
 
-        const simW = sim ? sim.width  : canvas.width  / scale;
-        const simH = sim ? sim.height : canvas.height / scale;
+        const simW = sim ? sim.width  : canvas.width  / (scale * this.dpr);
+        const simH = sim ? sim.height : canvas.height / (scale * this.dpr);
 
         // Simulation box outline
         if (this.boxColor) {

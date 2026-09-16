@@ -11,7 +11,7 @@ export class Simulation {
         this.dt              = dt;
         this._fconv          = FORCE_CONV;
         this.forces          = [];
-        this.zeroCOMVelocity = false; // subtract COM drift every step
+        this.zeroCOMVelocity = false; // subtract COM drift every step (only meaningful without periodic boundaries)
         this.store           = new ParticleStore(Math.max(count, 32));
         for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
     }
@@ -30,7 +30,7 @@ export class Simulation {
     // ── Structured initialisers ───────────────────────────────────────
 
     static fromMixture(groups, { width = 800, height = 600, boundary, dt, maxSpeed } = {}) {
-        const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt && { dt }), ...(maxSpeed && { maxSpeed }) });
+        const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt !== undefined && { dt }), ...(maxSpeed !== undefined && { maxSpeed }) });
         const total = groups.reduce((s, g) => s + g.count, 0);
 
         // Jittered grid — prevents LJ blowup from overlapping random starts
@@ -72,9 +72,9 @@ export class Simulation {
     // Particles evenly spaced on a circle.
     static fromRing(count, {
         radius = 200, cx, cy, species = 'default',
-        particleRadius = 2, width = 800, height = 600, boundary,
+        particleRadius = 2, width = 800, height = 600, boundary, dt, maxSpeed,
     } = {}) {
-        const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+        const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt !== undefined && { dt }), ...(maxSpeed !== undefined && { maxSpeed }) });
         const ox  = cx ?? width  / 2;
         const oy  = cy ?? height / 2;
         for (let i = 0; i < count; i++) {
@@ -92,9 +92,9 @@ export class Simulation {
     // Particles on a regular lattice.
     static fromGrid(cols, rows, {
         spacing = 30, ox, oy, species = 'default',
-        particleRadius = 2, width = 800, height = 600, boundary,
+        particleRadius = 2, width = 800, height = 600, boundary, dt, maxSpeed,
     } = {}) {
-        const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+        const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt !== undefined && { dt }), ...(maxSpeed !== undefined && { maxSpeed }) });
         const x0  = ox ?? (width  - (cols - 1) * spacing) / 2;
         const y0  = oy ?? (height - (rows - 1) * spacing) / 2;
         for (let r = 0; r < rows; r++) {

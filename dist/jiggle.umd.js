@@ -99,18 +99,6 @@
     const KB         = 0.001987;   // kcal / (mol·K)  — Boltzmann constant
     const FORCE_CONV = 4.184e-4;   // (Å/fs)² per (kcal/mol) per amu  (= 1/mvv2e, LAMMPS real)
 
-    // Box-Muller Gaussian sampler (mean=0, std=1)
-    let _spare$2 = null;
-    function randG$2() {
-        if (_spare$2 !== null) { const s = _spare$2; _spare$2 = null; return s; }
-        let u, v;
-        do { u = Math.random(); } while (u === 0);
-        do { v = Math.random(); } while (v === 0);
-        const mag = Math.sqrt(-2 * Math.log(u));
-        _spare$2 = mag * Math.sin(2 * Math.PI * v);
-        return       mag * Math.cos(2 * Math.PI * v);
-    }
-
     class Simulation {
         constructor({ count = 60, width = 800, height = 600, boundary = new PeriodicBoundary(), maxSpeed = 50, dt = 1 } = {}) {
             this.width           = width;
@@ -120,7 +108,7 @@
             this.dt              = dt;
             this._fconv          = FORCE_CONV;
             this.forces          = [];
-            this.zeroCOMVelocity = false; // subtract COM drift every step
+            this.zeroCOMVelocity = false; // subtract COM drift every step (only meaningful without periodic boundaries)
             this.store           = new ParticleStore(Math.max(count, 32));
             for (let i = 0; i < count; i++) this.store.add(this._mkDesc());
         }
@@ -139,7 +127,7 @@
         // ── Structured initialisers ───────────────────────────────────────
 
         static fromMixture(groups, { width = 800, height = 600, boundary, dt, maxSpeed } = {}) {
-            const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt && { dt }), ...(maxSpeed && { maxSpeed }) });
+            const sim   = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt !== undefined && { dt }), ...(maxSpeed !== undefined && { maxSpeed }) });
             const total = groups.reduce((s, g) => s + g.count, 0);
 
             // Jittered grid — prevents LJ blowup from overlapping random starts
@@ -181,9 +169,9 @@
         // Particles evenly spaced on a circle.
         static fromRing(count, {
             radius = 200, cx, cy, species = 'default',
-            particleRadius = 2, width = 800, height = 600, boundary,
+            particleRadius = 2, width = 800, height = 600, boundary, dt, maxSpeed,
         } = {}) {
-            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt !== undefined && { dt }), ...(maxSpeed !== undefined && { maxSpeed }) });
             const ox  = cx ?? width  / 2;
             const oy  = cy ?? height / 2;
             for (let i = 0; i < count; i++) {
@@ -201,9 +189,9 @@
         // Particles on a regular lattice.
         static fromGrid(cols, rows, {
             spacing = 30, ox, oy, species = 'default',
-            particleRadius = 2, width = 800, height = 600, boundary,
+            particleRadius = 2, width = 800, height = 600, boundary, dt, maxSpeed,
         } = {}) {
-            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }) });
+            const sim = new Simulation({ count: 0, width, height, ...(boundary && { boundary }), ...(dt !== undefined && { dt }), ...(maxSpeed !== undefined && { maxSpeed }) });
             const x0  = ox ?? (width  - (cols - 1) * spacing) / 2;
             const y0  = oy ?? (height - (rows - 1) * spacing) / 2;
             for (let r = 0; r < rows; r++) {
@@ -260,27 +248,6 @@
         temperature() {
             const n = this.store.count;
             return n ? this.kineticEnergy() / (n * KB * FORCE_CONV) : 0;
-        }
-
-        // Assign velocities from the Maxwell-Boltzmann distribution at `temperature` K.
-        // Each component drawn from N(0, √(kBT/m)).  COM velocity is zeroed afterward
-        // so the system starts with no bulk drift.
-        initVelocities(temperature) {
-            const { vx, vy, mass, count } = this.store;
-            const kBT = KB * temperature * FORCE_CONV; // amu·(Å/fs)²
-            for (let i = 0; i < count; i++) {
-                const sig = Math.sqrt(kBT / mass[i]);
-                vx[i] = sig * randG$2();
-                vy[i] = sig * randG$2();
-            }
-            // subtract COM velocity
-            let px = 0, py = 0, M = 0;
-            for (let i = 0; i < count; i++) { px += mass[i] * vx[i]; py += mass[i] * vy[i]; M += mass[i]; }
-            if (M > 0) {
-                const vcx = px / M, vcy = py / M;
-                for (let i = 0; i < count; i++) { vx[i] -= vcx; vy[i] -= vcy; }
-            }
-            return this;
         }
 
         // ── Resize ────────────────────────────────────────────────────────
@@ -395,6 +362,37 @@
         }
     }
 
+    // Fixed-timestep driver: decouples simulation speed from the display refresh
+    // rate. Call tick() once per animation frame; it returns how many fixed-dt
+    // steps to run so the simulation advances stepsPerSecond * dt per real second,
+    // regardless of whether the display refreshes at 60, 120, or 144 Hz.
+    class SimulationClock {
+        constructor({ stepsPerSecond = 60, maxStepsPerFrame = 5, maxFrameSeconds = 0.25 } = {}) {
+            this.stepsPerSecond   = stepsPerSecond;
+            this.maxStepsPerFrame = maxStepsPerFrame;
+            this.maxFrameSeconds  = maxFrameSeconds;
+            this._last = null;
+            this._acc  = 0;
+        }
+
+        reset() {
+            this._last = null;
+            this._acc  = 0;
+        }
+
+        tick(now) {
+            if (typeof now !== 'number') now = performance.now();
+            if (this._last === null) { this._last = now; return 0; }
+            let elapsed = (now - this._last) / 1000;
+            this._last = now;
+            if (elapsed > this.maxFrameSeconds) elapsed = this.maxFrameSeconds;
+            this._acc += elapsed * this.stepsPerSecond;
+            const steps = Math.min(this.maxStepsPerFrame, Math.floor(this._acc));
+            this._acc -= steps;
+            return steps;
+        }
+    }
+
     class Particle {
         constructor({ x, y, vx = 0, vy = 0, radius = 2, mass = null, species = 'default' }) {
             this.x       = x;
@@ -477,10 +475,7 @@
             for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
             if (KE < 1e-30) return;
             const KE_target = count * KB * this.temperature * FORCE_CONV; // [amu·(Å/fs)²]
-            // Exact solution of dT/dt = (T_target − T)/τ — always real and positive,
-            // unlike the Euler form (1 + dt/τ·(KE_target/KE − 1)) which can go negative.
-            const decay = Math.exp(-dt / this.tau);
-            const lam   = Math.sqrt(decay + (1 - decay) * (KE_target / KE));
+            const lam = Math.sqrt(Math.max(0, 1 + (dt / this.tau) * (KE_target / KE - 1)));
             for (let i = 0; i < count; i++) { vx[i] *= lam; vy[i] *= lam; }
         }
     }
@@ -539,23 +534,14 @@
     //   2. recompute KE, then xi += dt · (2·KE − N_f·kBT_amu) / Q
     //   3. scale v by exp(-xi · dt/2)
     //
-    // Stability: xi is clamped to ±10/tau after each update.  In equilibrium
-    // |xi| ~ O(1/tau), so the clamp has a ≥10× margin and never activates;
-    // during transients (LJ blow-up, cold start) it bounds the velocity scaling
-    // per half-sub-step to exp(10·dts/(2·tau)) ≈ 1 + small, preventing the
-    // freeze cycle where xi → ±∞ zeros all velocities for thousands of steps.
-    //
     // Parameters:
     //   temperature  — target temperature in Kelvin
     //   tau          — relaxation time in fs; characteristic oscillation period ≈ 2π·tau
-    //   nRespa       — number of NH sub-steps per O slot (default 4); more sub-steps keep
-    //                  each velocity scaling small and prevent runaway when xi is large.
 
     class NoseHooverForce {
-        constructor({ temperature = 300, tau = 100, nRespa = 4 } = {}) {
+        constructor({ temperature = 300, tau = 100 } = {}) {
             this.temperature = temperature; // K
             this.tau         = tau;         // fs
-            this.nRespa      = nRespa;
             this.xi          = 0;           // thermostat friction, 1/fs
             this.isLangevin  = true;
             this.enabled     = false;
@@ -566,38 +552,20 @@
             const dt    = sim?.dt ?? 1;
             const Nf    = 2 * count;                           // DOF in 2D
             const kBT_a = KB * this.temperature * FORCE_CONV; // kBT in [amu·Å²/fs²]
+            const Q     = Nf * kBT_a * this.tau * this.tau;   // thermostat mass [amu·Å²]
 
-            // T = 0: freeze all velocities and reset xi; Q = 0 would cause NaN otherwise.
-            if (kBT_a < 1e-30) {
-                this.xi = 0;
-                for (let i = 0; i < count; i++) { vx[i] = 0; vy[i] = 0; }
-                return;
-            }
+            // first half-friction kick
+            const s1 = Math.exp(-this.xi * 0.5 * dt);
+            for (let i = 0; i < count; i++) { vx[i] *= s1; vy[i] *= s1; }
 
-            const Q      = Nf * kBT_a * this.tau * this.tau;  // thermostat mass [amu·Å²]
-            const n      = this.nRespa;
-            const dts    = dt / n;                             // sub-step size
-            const xiMax  = 10 / this.tau;                      // runaway guard; equilibrium |xi| << xiMax
+            // update xi from current KE
+            let KE = 0;
+            for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
+            this.xi += dt * (2 * KE - Nf * kBT_a) / Q;
 
-            // Clamp any xi that arrived in a bad state before the first sub-step.
-            if (this.xi >  xiMax) this.xi =  xiMax;
-            if (this.xi < -xiMax) this.xi = -xiMax;
-
-            // v-NHVE with nRespa sub-steps: keeps each half-step scaling exp(±|xi|·dts/2)
-            // small and prevents the single-step runaway that occurs when xi is large.
-            for (let r = 0; r < n; r++) {
-                const s1 = Math.exp(-this.xi * 0.5 * dts);
-                for (let i = 0; i < count; i++) { vx[i] *= s1; vy[i] *= s1; }
-
-                let KE = 0;
-                for (let i = 0; i < count; i++) KE += 0.5 * mass[i] * (vx[i] * vx[i] + vy[i] * vy[i]);
-                this.xi += dts * (2 * KE - Nf * kBT_a) / Q;
-                if (this.xi >  xiMax) this.xi =  xiMax;
-                if (this.xi < -xiMax) this.xi = -xiMax;
-
-                const s2 = Math.exp(-this.xi * 0.5 * dts);
-                for (let i = 0; i < count; i++) { vx[i] *= s2; vy[i] *= s2; }
-            }
+            // second half-friction kick
+            const s2 = Math.exp(-this.xi * 0.5 * dt);
+            for (let i = 0; i < count; i++) { vx[i] *= s2; vy[i] *= s2; }
         }
     }
 
@@ -744,17 +712,22 @@
         setPosition(x, y) { this.x = x; this.y = y; }
         clear()            { this.x = null; this.y = null; }
 
-        apply(store) {
+        apply(store, sim) {
             if (this.x === null) return;
             const { x, y, fx, fy, count } = store;
             const mx    = this.x, my = this.y;
             const dist  = this.dist;
             const dist2 = dist * dist;
             const str   = this.strength;
+            const periodic = sim?.boundary?.isPeriodic ?? false;
 
             for (let i = 0; i < count; i++) {
-                const dx = x[i] - mx;
-                const dy = y[i] - my;
+                let dx = x[i] - mx;
+                let dy = y[i] - my;
+                if (periodic) {
+                    const mi = sim.boundary.minImage(dx, dy, sim);
+                    dx = mi[0]; dy = mi[1];
+                }
                 const d2 = dx * dx + dy * dy;
                 if (d2 === 0 || d2 >= dist2) continue;
 
@@ -780,7 +753,7 @@
         setPosition(x, y) { this.x = x; this.y = y; }
         clear()            { this.x = null; this.y = null; }
 
-        apply(store) {
+        apply(store, sim) {
             if (this.x === null) return;
             const { x, y, fx, fy, count } = store;
             const { epsilon, sigma } = this;
@@ -788,10 +761,15 @@
             const cutoff2 = cutoff * cutoff;
             const mx = this.x, my = this.y;
             const minD2 = (sigma * 0.9) ** 2;
+            const periodic = sim?.boundary?.isPeriodic ?? false;
 
             for (let i = 0; i < count; i++) {
-                const dx = x[i] - mx;
-                const dy = y[i] - my;
+                let dx = x[i] - mx;
+                let dy = y[i] - my;
+                if (periodic) {
+                    const mi = sim.boundary.minImage(dx, dy, sim);
+                    dx = mi[0]; dy = mi[1];
+                }
                 const d2 = dx * dx + dy * dy;
                 if (d2 === 0 || d2 >= cutoff2) continue;
 
@@ -1163,29 +1141,24 @@
 
     // Boid-style flocking: separation (avoid crowding), alignment (match heading),
     // cohesion (steer toward group centre).  Uses CellGrid for O(n) pair detection.
-    //
-    // Runs in the Langevin (O) slot so that weights act as direct per-step velocity
-    // changes, not as forces attenuated by FORCE_CONV.  At typical thermal velocities
-    // (~0.02 Å/fs at 300 K) the default weights give gentle, responsive boid behaviour.
     class FlockForce {
         constructor({
             perceptionRadius = 80,
             separationRadius = 25,
-            separationWeight = 0.002,
-            alignmentWeight  = 0.1,
-            cohesionWeight   = 0.0002,
+            separationWeight = 0.25,
+            alignmentWeight  = 0.08,
+            cohesionWeight   = 0.04,
         } = {}) {
             this.perceptionRadius = perceptionRadius;
             this.separationRadius = separationRadius;
             this.separationWeight = separationWeight;
             this.alignmentWeight  = alignmentWeight;
             this.cohesionWeight   = cohesionWeight;
-            this.isLangevin = true;
             this._grid = new CellGrid();
         }
 
         apply(store, sim) {
-            const { x, y, vx, vy, count } = store;
+            const { x, y, vx, vy, fx, fy, count } = store;
             if (count < 2) return;
 
             const { perceptionRadius: pr, separationRadius: sr,
@@ -1235,15 +1208,15 @@
                 const bi = i * 7;
                 const nb = buf[bi + 6];
 
-                vx[i] += sw * buf[bi    ];
-                vy[i] += sw * buf[bi + 1];
+                fx[i] += sw * buf[bi    ];
+                fy[i] += sw * buf[bi + 1];
 
                 if (nb > 0) {
                     const invNb = 1 / nb;
-                    vx[i] += cw * buf[bi + 4] * invNb;
-                    vy[i] += cw * buf[bi + 5] * invNb;
-                    vx[i] += aw * (buf[bi + 2] * invNb - vx[i]);
-                    vy[i] += aw * (buf[bi + 3] * invNb - vy[i]);
+                    fx[i] += cw * buf[bi + 4] * invNb;
+                    fy[i] += cw * buf[bi + 5] * invNb;
+                    fx[i] += aw * (buf[bi + 2] * invNb - vx[i]);
+                    fy[i] += aw * (buf[bi + 3] * invNb - vy[i]);
                 }
             }
         }
@@ -1261,6 +1234,7 @@
             scale         = 1,            // pixels / Å
             colorMap      = {},
             boxColor      = null, // stroke color for sim box outline, e.g. 'rgba(255,255,255,0.2)'
+            dpr           = 1,    // device pixel ratio: set canvas.width = cssWidth * dpr for sharp HiDPI rendering
             drawParticle  = null, // (ctx, p) => void — custom particle drawing
             drawLink      = null, // (ctx, pi, pj, alpha) => void — custom link drawing
             drawMouseLink = null, // (ctx, p, mouse, alpha) => void  (mouse is pixel {x,y})
@@ -1274,6 +1248,7 @@
             this.linkDist      = linkDist;
             this.mouseLinkDist = mouseLinkDist;
             this.scale         = scale;
+            this.dpr           = dpr;
             this.viewX         = 0; // Å — viewport left edge in simulation space
             this.viewY         = 0; // Å — viewport top  edge in simulation space
             this.boxColor      = boxColor;
@@ -1335,15 +1310,17 @@
         // sim: optional Simulation — used for box size and periodic boundary.
         render(store, mouse = { x: null, y: null }, sim = null) {
             const { ctx, canvas } = this;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // CSS-pixel coordinate space: canvas.width = cssWidth * dpr
+            ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+            ctx.clearRect(0, 0, canvas.width / this.dpr, canvas.height / this.dpr);
 
             const scale = this.scale;
             const vX    = this.viewX;
             const vY    = this.viewY;
             const n     = store.count;
 
-            const simW = sim ? sim.width  : canvas.width  / scale;
-            const simH = sim ? sim.height : canvas.height / scale;
+            const simW = sim ? sim.width  : canvas.width  / (scale * this.dpr);
+            const simH = sim ? sim.height : canvas.height / (scale * this.dpr);
 
             // Simulation box outline
             if (this.boxColor) {
@@ -1528,6 +1505,7 @@
     exports.ReflectiveBoundary = ReflectiveBoundary;
     exports.RepulsionForce = RepulsionForce;
     exports.Simulation = Simulation;
+    exports.SimulationClock = SimulationClock;
     exports.SpringForce = SpringForce;
     exports.ThermalForce = ThermalForce;
     exports.VortexForce = VortexForce;

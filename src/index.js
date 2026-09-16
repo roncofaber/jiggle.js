@@ -1,5 +1,6 @@
 export { Simulation }         from './core/Simulation.js';
 export { ParticleStore }      from './core/ParticleStore.js';
+export { SimulationClock }   from './core/Clock.js';
 export { Particle }           from './core/Particle.js';
 export { ThermalForce }       from './forces/ThermalForce.js';
 export { BerendsenForce }    from './forces/BerendsenForce.js';
