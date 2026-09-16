@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     Simulation, ParticleStore, CellGrid, LJForce, ThermalForce,
-    PeriodicBoundary, KB, FORCE_CONV,
+    PeriodicBoundary, MouseForce, KB, FORCE_CONV,
 } from '../src/index.js';
 
 test('ParticleStore: growth, swap-remove, force reset', () => {
@@ -139,4 +139,40 @@ test('units: kBT at 300 K converts consistently', () => {
     // Analytic: kBT/m = 1.380649e-23 J/K * 300 K / 1.66054e-27 kg = 2.4943e6 m^2/s^2
     // 1 m^2/s^2 = 1e-10 A^2/fs^2, so the expected value is 2.4943e-4
     assert.ok(Math.abs(kBT - 2.4943e-4) / 2.4943e-4 < 0.01, `kBT_fc = ${kBT}`);
+});
+
+test('MouseForce: stirring drag relaxes particles toward the cursor velocity', () => {
+    const sim = new Simulation({ count: 2, width: 200, height: 200, dt: 1 });
+    const mouse = new MouseForce({ dist: 27, strength: 0, drag: 2, dragMax: 10 }); // repulsion off
+    sim.addForce(mouse);
+    sim.store.x[0] = 60;  sim.store.y[0] = 50;  sim.store.vx[0] = 0; sim.store.vy[0] = 0;
+    sim.store.x[1] = 150; sim.store.y[1] = 150; sim.store.vx[1] = 0; sim.store.vy[1] = 0;
+
+    mouse.setPosition(50, 50);
+    mouse.apply(sim.store, sim);   // first apply: cursor velocity unknown -> 0
+    mouse.setPosition(58, 50);     // cursor moved +8 A since the last apply
+    mouse.apply(sim.store, sim);   // cursor velocity = 8 A/fs (under the cap)
+
+    // Particle 0 sits 8 A from the cursor: vx relaxes toward +8
+    // by k*w = (1-exp(-2)) * (1-8/27) ~= 0.61 -> vx ~= 4.9
+    assert.ok(sim.store.vx[0] > 2, `vx0 = ${sim.store.vx[0]}`);
+    assert.ok(sim.store.vx[0] <= 8, `vx0 = ${sim.store.vx[0]}`);
+    assert.equal(sim.store.vx[1], 0); // far particle untouched
+
+    // A huge cursor jump is capped at dragMax
+    mouse.setPosition(158, 50);    // +100 A -> capped at 10 A/fs
+    mouse.apply(sim.store, sim);
+    assert.ok(sim.store.vx[0] <= 10 + 1e-9, `vx0 = ${sim.store.vx[0]}`);
+});
+
+test('MouseForce: stirring drag off by default (backward compatible)', () => {
+    const sim = new Simulation({ count: 1, width: 200, height: 200, dt: 1 });
+    const mouse = new MouseForce({ dist: 27, strength: 3.0 }); // no drag option
+    sim.addForce(mouse);
+    sim.store.x[0] = 60; sim.store.y[0] = 50; sim.store.vx[0] = 0;
+    mouse.setPosition(50, 50);
+    mouse.apply(sim.store, sim);
+    mouse.setPosition(58, 50);
+    mouse.apply(sim.store, sim);
+    assert.equal(sim.store.vx[0], 0); // velocities untouched without the drag option
 });

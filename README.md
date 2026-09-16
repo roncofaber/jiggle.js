@@ -167,12 +167,23 @@ Morse pair potential, same species/mixing API: `{ De, re, a }` per species.
 
 ### MouseForce / MouseLJForce
 
-Cursor interaction; both support periodic minimum-image distances.
+Cursor interaction; both support periodic minimum-image distances. MouseForce
+repels particles from the cursor and can additionally **stir** them: an
+optional drag relaxes nearby particle velocities toward the cursor's velocity
+(exact exponential relaxation, stable at any strength - a stationary cursor
+damps local motion the way a finger in water does).
 
 ```js
-const mouse = new MouseForce({ dist: 27, strength: 3.0 });
+const mouse = new MouseForce({ dist: 27, strength: 3.0, drag: 2, dragMax: 10 });
 canvas.addEventListener('mousemove', e => mouse.setPosition(px, py));   // sim units
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `dist` | `120` | Interaction radius (Å) |
+| `strength` | `0.06` | Repulsion strength at the cursor |
+| `drag` | `0` | Stirring relaxation rate (1/fs); `0` disables it |
+| `dragMax` | `10` | Cap on the cursor speed used for the drag (Å/fs) |
 
 ### Others
 
