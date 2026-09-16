@@ -4,7 +4,7 @@
 // is stable at any strength, and a stationary cursor damps local motion the
 // way a finger in water does.
 export class MouseForce {
-    constructor({ dist = 120, strength = 0.06, drag = 0, dragMax = 10, dragThreshold = 0.5 } = {}) {
+    constructor({ dist = 120, strength = 0.06, drag = 0, dragMax = 0.1, dragThreshold = 0.05 } = {}) {
         this.dist     = dist;
         this.strength = strength;
         this.drag     = drag;           // relaxation rate in 1/fs; 0 disables stirring
