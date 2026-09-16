@@ -379,10 +379,18 @@ class SimulationClock {
         if (this._last === null) { this._last = now; return 0; }
         let elapsed = (now - this._last) / 1000;
         this._last = now;
-        if (elapsed > this.maxFrameSeconds) elapsed = this.maxFrameSeconds;
+        // Hidden tab or throttled rAF: drop the backlog instead of banking it,
+        // otherwise the accumulator grows while hidden and the simulation
+        // bursts to maxStepsPerFrame per frame on return
+        if (elapsed > this.maxFrameSeconds) {
+            this._acc = 0;
+            elapsed = this.maxFrameSeconds;
+        }
         this._acc += elapsed * this.stepsPerSecond;
         const steps = Math.min(this.maxStepsPerFrame, Math.floor(this._acc));
         this._acc -= steps;
+        // Never bank more than one frame's worth of steps
+        this._acc = Math.min(this._acc, this.maxStepsPerFrame);
         return steps;
     }
 }

@@ -30,3 +30,16 @@ test('SimulationClock: reset clears the accumulator', () => {
     clock.reset();
     assert.equal(clock.tick(1000), 0); // starts over, no accumulated debt
 });
+
+test('SimulationClock: a throttled tab banks no step backlog', () => {
+    const clock = new SimulationClock({ stepsPerSecond: 72, maxStepsPerFrame: 5 });
+    clock.tick(0);
+    let total = 0;
+    // 40 ticks at 1 Hz (hidden/throttled): 5 steps each, debt must NOT accumulate
+    for (let f = 1; f <= 40; f++) total += clock.tick(f * 1000);
+    assert.equal(total, 200);
+    // Back at 60 fps: at most one catch-up frame, then the normal rate
+    let burst = 0;
+    for (let f = 0; f < 5; f++) burst += clock.tick(40000 + f * 1000 / 60);
+    assert.ok(burst <= 10, `return burst = ${burst} steps in 5 frames`);
+});
