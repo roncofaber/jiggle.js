@@ -706,16 +706,17 @@
     // is stable at any strength, and a stationary cursor damps local motion the
     // way a finger in water does.
     class MouseForce {
-        constructor({ dist = 120, strength = 0.06, drag = 0, dragMax = 10 } = {}) {
+        constructor({ dist = 120, strength = 0.06, drag = 0, dragMax = 10, dragThreshold = 0.5 } = {}) {
             this.dist     = dist;
             this.strength = strength;
-            this.drag     = drag;     // relaxation rate in 1/fs; 0 disables stirring
-            this.dragMax  = dragMax;  // cap on the cursor speed used for the drag (A/fs)
+            this.drag     = drag;           // relaxation rate in 1/fs; 0 disables stirring
+            this.dragMax  = dragMax;        // cap on the cursor speed used for the drag (A/fs)
+            this.dragThreshold = dragThreshold; // stir only above this cursor speed (A/fs)
             this.x        = null;
             this.y        = null;
-            this.vx       = 0;        // cursor velocity in A/fs, tracked per step
+            this.vx       = 0;              // cursor velocity in A/fs, tracked per step
             this.vy       = 0;
-            this._prev    = null;     // cursor position at the previous apply
+            this._prev    = null;           // cursor position at the previous apply
         }
 
         setPosition(x, y) { this.x = x; this.y = y; }
@@ -734,6 +735,7 @@
             const periodic = sim?.boundary?.isPeriodic ?? false;
 
             // Cursor velocity from the per-step displacement, capped at dragMax
+            let stirring = false;
             if (this.drag > 0) {
                 if (this._prev) {
                     const dx = this.x - this._prev.x, dy = this.y - this._prev.y;
@@ -745,6 +747,9 @@
                     this.vx = 0; this.vy = 0;
                 }
                 this._prev = { x: this.x, y: this.y };
+                // Stir only when the cursor moves: a stationary cursor must not
+                // damp the repulsion-driven outflow (that traps particles)
+                stirring = Math.sqrt(this.vx * this.vx + this.vy * this.vy) > this.dragThreshold;
             }
 
             for (let i = 0; i < count; i++) {
@@ -764,7 +769,7 @@
                 fx[i] += f * dx;
                 fy[i] += f * dy;
 
-                if (this.drag > 0) {
+                if (stirring) {
                     const k = w * (1 - Math.exp(-this.drag * dt));
                     vx[i] += k * (this.vx - vx[i]);
                     vy[i] += k * (this.vy - vy[i]);
